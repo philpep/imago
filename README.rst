@@ -74,7 +74,7 @@ From the docker image
 Assuming you have a working ``~/.kube/config`` file::
 
   $ docker pull philpep/kubernetes-image-sync
-  $ docker run --rm -it -v ~/.kube/config:/config philpep/kubernetes-image-sync --help
+  $ docker run --rm -it -u $(id -u) -v ~/.kube/config:/config philpep/kubernetes-image-sync --help
 
 Inside the cluster
 ~~~~~~~~~~~~~~~~~~
