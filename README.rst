@@ -102,7 +102,7 @@ Inside the cluster
 
 You can run ``kubernetes-image-sync`` inside the cluster, for instance in a ``CronJob`` kubernetes object that runs every day.
 
-See the `ServiceAccount <https://raw.githubusercontent.com/philpep/kubernetes-image-sync/master/deploy/cronjob.yaml>`_
+See the `ServiceAccount <https://raw.githubusercontent.com/philpep/kubernetes-image-sync/master/deploy/serviceaccount.yaml>`_
 and `CronJob <https://raw.githubusercontent.com/philpep/kubernetes-image-sync/master/deploy/cronjob.yaml>`_ objects.
 
 ::
