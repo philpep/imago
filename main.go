@@ -31,7 +31,6 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
-	batchv1 "k8s.io/api/batch/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -187,7 +186,6 @@ type kubernetesImageSync struct {
 	client      *kubernetes.Clientset
 	pods        *v1.PodList
 	replicasets *appsv1.ReplicaSetList
-	jobs        *batchv1.JobList
 	imageCache  map[string]string
 	secretCache map[string]*v1.Secret
 	namespace   string
@@ -214,17 +212,6 @@ func (c *kubernetesImageSync) getReplicaSets() *appsv1.ReplicaSetList {
 		}
 	}
 	return c.replicasets
-}
-
-func (c *kubernetesImageSync) getJobs() *batchv1.JobList {
-	if c.jobs == nil {
-		var err error
-		c.jobs, err = c.client.BatchV1().Jobs(c.namespace).List(metav1.ListOptions{})
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-	return c.jobs
 }
 
 func (c *kubernetesImageSync) getRegistrySecret(namespace string, name string) *v1.Secret {
