@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -37,6 +38,13 @@ import (
 	"strings"
 	"time"
 )
+
+func closeResource(r io.Closer) {
+	err := r.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
+}
 
 func getDigestURL(image string) string {
 	u, err := url.Parse(fmt.Sprintf("https://%s", image))
@@ -86,7 +94,7 @@ func getBearerToken(authHeader string) string {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer closeResource(resp.Body)
 	if resp.StatusCode != 200 {
 		log.Fatalf("Error while requesting auth token on %s: %s", req.URL, resp.Status)
 	}
@@ -134,7 +142,7 @@ func getDigest(image string, credentials map[string]string) string {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer closeResource(resp.Body)
 	authenticate := resp.Header.Get("www-authenticate")
 	if resp.StatusCode == 401 && strings.HasPrefix(authenticate, "Bearer ") {
 		req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", getBearerToken(authenticate)))
@@ -142,7 +150,7 @@ func getDigest(image string, credentials map[string]string) string {
 		if err != nil {
 			log.Fatal(err)
 		}
-		defer resp.Body.Close()
+		defer closeResource(resp.Body)
 	}
 	if resp.StatusCode != 200 {
 		log.Fatalf("Unexpected response while requesting %s: %s", digestURL, resp.Status)
