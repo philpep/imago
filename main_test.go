@@ -20,7 +20,7 @@ import (
 
 func TestGetDigestURL(t *testing.T) {
 	tests := []struct {
-		image    string
+		name     string
 		expected string
 	}{
 		{"r.philpep.org/nginx", "https://r.philpep.org/v2/nginx/manifests/latest"},
@@ -33,10 +33,10 @@ func TestGetDigestURL(t *testing.T) {
 		{"registry:5000/user/nginx:alpine", "https://registry:5000/v2/user/nginx/manifests/alpine"},
 	}
 	for _, test := range tests {
-		digestURL := getDigestURL(test.image)
+		digestURL := getDigestURL(test.name)
 		if digestURL != test.expected {
 			t.Errorf("getDigestURL(%s) = %s, expected %s",
-				test.image, digestURL, test.expected)
+				test.name, digestURL, test.expected)
 		}
 	}
 }

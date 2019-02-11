@@ -47,20 +47,20 @@ func closeResource(r io.Closer) {
 	}
 }
 
-func getDigestURL(image string) string {
-	u, err := url.Parse(fmt.Sprintf("https://%s", image))
+func getDigestURL(name string) string {
+	u, err := url.Parse(fmt.Sprintf("https://%s", name))
 	if err != nil {
 		log.Fatal(err)
 	}
 	host := u.Host
 	path := u.Path
 	tag := "latest"
-	if host == image || (!strings.Contains(host, ".") && !strings.Contains(host, ":")) {
+	if host == name || (!strings.Contains(host, ".") && !strings.Contains(host, ":")) {
 		host = "registry.hub.docker.com"
 		if !strings.Contains(path, "/") {
-			path = "/library/" + image
+			path = "/library/" + name
 		} else {
-			path = "/" + image
+			path = "/" + name
 		}
 	}
 	if strings.Contains(path, ":") {
@@ -121,8 +121,8 @@ func homeDir() string {
 	return user.HomeDir
 }
 
-func getDigest(image string, credentials map[string]string) string {
-	digestURL := getDigestURL(image)
+func getDigest(name string, credentials map[string]string) string {
+	digestURL := getDigestURL(name)
 	client := &http.Client{
 		Timeout: time.Second * 10,
 	}
@@ -293,14 +293,14 @@ func (c *kubernetesImageSync) getNewImages(kind string, meta *metav1.ObjectMeta,
 	return result
 }
 
-func (c *kubernetesImageSync) getDigest(image string, credentials map[string]string) string {
+func (c *kubernetesImageSync) getDigest(name string, credentials map[string]string) string {
 	if c.imageCache == nil {
 		c.imageCache = make(map[string]string)
 	}
-	if c.imageCache[image] == "" {
-		c.imageCache[image] = getDigest(image, credentials)
+	if c.imageCache[name] == "" {
+		c.imageCache[name] = getDigest(name, credentials)
 	}
-	return c.imageCache[image]
+	return c.imageCache[name]
 }
 
 func (c *kubernetesImageSync) getRunningImagesFor(obj *parentController) map[string]string {
