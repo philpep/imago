@@ -55,6 +55,27 @@ Arguments
             Check deployments and daemonsets in given namespace (default to current namespace)
 
 
+Example output
+==============
+
+::
+
+    $ kubernetes-image-sync
+    2019/02/11 17:55:21 checking Deployment/aptly:
+    2019/02/11 17:55:21   aptly ok
+    2019/02/11 17:55:21   nginx ok
+    2019/02/11 17:55:22 checking Deployment/kibana:
+    2019/02/11 17:55:22   kibana ok
+    2019/02/11 17:55:22   nginx ok
+    2019/02/11 17:55:22 checking Deployment/philpep.org-gitweb:
+    2019/02/11 17:55:22   gitweb has to be updated to r.in.philpep.org/gitweb@sha256:ff00caed3525dec5d2e57ffe210a16630ed9d3c31bf611f2987533eba4a0cbbe
+    2019/02/11 17:55:22   nginx ok
+    2019/02/11 17:55:22 update Deployment/philpep.org images gitweb
+    2019/02/11 17:55:22 checking DaemonSet/fluentd:
+    2019/02/11 17:55:22   fluentd has to be updated to r.in.philpep.org/fluentd@sha256:6a92af8a9db2ca243e0eba8d401cec11b124822e15b558b35ab45825ed4d1f54
+    2019/02/11 17:55:22 update DaemonSet/fluentd images fluentd
+
+
 Install and run
 ===============
 
