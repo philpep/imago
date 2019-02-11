@@ -113,14 +113,6 @@ func getBearerToken(authHeader string) string {
 	return result.Token
 }
 
-func homeDir() string {
-	user, err := user.Current()
-	if err != nil {
-		log.Fatal(err)
-	}
-	return user.HomeDir
-}
-
 func getDigest(name string, credentials map[string]string) string {
 	digestURL := getDigestURL(name)
 	client := &http.Client{
@@ -437,6 +429,14 @@ func (c *kubernetesImageSync) initClient(kubeconfig string) {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func homeDir() string {
+	user, err := user.Current()
+	if err != nil {
+		log.Fatal(err)
+	}
+	return user.HomeDir
 }
 
 func main() {
