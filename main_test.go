@@ -15,7 +15,14 @@ limitations under the License.
 package main
 
 import (
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestGetDigestURL(t *testing.T) {
@@ -33,10 +40,55 @@ func TestGetDigestURL(t *testing.T) {
 		{"registry:5000/user/nginx:alpine", "https://registry:5000/v2/user/nginx/manifests/alpine"},
 	}
 	for _, test := range tests {
-		digestURL := getDigestURL(test.name)
-		if digestURL != test.expected {
-			t.Errorf("getDigestURL(%s) = %s, expected %s",
-				test.name, digestURL, test.expected)
-		}
+		assert.Equal(t, getDigestURL(test.name), test.expected)
 	}
+}
+
+func TestGetDigest(t *testing.T) {
+	expected := map[string]string{
+		"image":   "sha256:c166da3ccff505a36b4bfef93d29f102258073f1a784e2af00b1b001b5c1b3c3",
+		"image:1": "sha256:b5bb9d8014a0f9b1d61e21e796d78dccdf1352f23cd32812f4850b878ae4944c",
+		"image:2": "sha256:7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730",
+	}
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/image/manifests/latest":
+			w.Header().Set("Docker-Content-Digest", expected["image"])
+		case "/v2/image/manifests/1":
+			authorization := r.Header.Get("Authorization")
+			if authorization == "" {
+				w.Header().Set("www-authenticate", fmt.Sprintf(
+					"Bearer realm=\"https://%s/token\",service=\"srv\",scope=\"repository:nginx/nginx:pull\"", r.Host))
+				w.WriteHeader(401)
+			} else {
+				assert.Equal(t, authorization, "Bearer secret")
+				w.Header().Set("Docker-Content-Digest", expected["image:1"])
+			}
+		case "/token":
+			if _, err := io.WriteString(w, `{"token": "secret"}`); err != nil {
+				panic(err.Error())
+			}
+		case "/v2/image/manifests/2":
+			username, password, _ := r.BasicAuth()
+			assert.Equal(t, username, "user")
+			assert.Equal(t, password, "pass")
+			w.Header().Set("Docker-Content-Digest", expected["image:2"])
+		default:
+			t.Errorf("Unexpected request URL %s", r.URL)
+		}
+	}))
+	defer ts.Close()
+	reg := NewRegistryClient(ts.Client())
+	host, err := url.Parse(ts.URL)
+	if err != nil {
+		panic(err.Error())
+	}
+	assertDigest := func(name string) {
+		digest := reg.GetDigest(fmt.Sprintf("%s/%s", host.Host, name))
+		assert.Equal(t, digest, expected[name])
+	}
+	assertDigest("image")
+	assertDigest("image:1")
+	reg.Auth = map[string]string{host.Host: "dXNlcjpwYXNz"}
+	assertDigest("image:2")
 }
