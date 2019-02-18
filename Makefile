@@ -18,3 +18,8 @@ check:
 	go fmt
 	goimports -w .
 .PHONY: check
+
+docker:
+	for image in $$(grep 'FROM' Dockerfile | awk '{ print $$2 }'); do docker pull $$image; done
+	docker build -t philpep/kubernetes-image-sync .
+.PHONY: docker
