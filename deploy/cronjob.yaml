@@ -1,7 +1,7 @@
 apiVersion: batch/v1beta1
 kind: CronJob
 metadata:
-  name: kubernetes-image-sync
+  name: imago
   namespace: default
 spec:
   schedule: "0 4 * * *"
@@ -11,12 +11,12 @@ spec:
       template:
         metadata:
           labels:
-            k8s-app: kubernetes-image-sync
+            k8s-app: imago
         spec:
           restartPolicy: Never
-          serviceAccount: kubernetes-image-sync
-          serviceAccountName: kubernetes-image-sync
+          serviceAccount: imago
+          serviceAccountName: imago
           containers:
-            - name: kubernetes-image-sync
-              image: philpep/kubernetes-image-sync
+            - name: imago
+              image: philpep/imago
               imagePullPolicy: Always

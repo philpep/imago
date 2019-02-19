@@ -179,7 +179,7 @@ type parentController struct {
 	} `json:"spec"`
 }
 
-// Config represent a kubernetes-image-sync configuration
+// Config represent a imago configuration
 type Config struct {
 	cluster     *kubernetes.Clientset
 	reg         *RegistryClient
@@ -190,7 +190,7 @@ type Config struct {
 	dryrun      bool
 }
 
-// NewConfig initialize a new kubernetes-image-sync config
+// NewConfig initialize a new imago config
 func NewConfig(kubeconfig string, namespace string, allnamespaces bool, dryrun bool) *Config {
 	c := &Config{reg: NewRegistryClient(nil), dryrun: dryrun}
 	var err error

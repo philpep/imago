@@ -21,5 +21,5 @@ check:
 
 docker:
 	for image in $$(grep 'FROM' Dockerfile | awk '{ print $$2 }'); do docker pull $$image; done
-	docker build -t philpep/kubernetes-image-sync .
+	docker build -t philpep/imago .
 .PHONY: docker
