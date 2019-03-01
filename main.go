@@ -30,7 +30,6 @@ import (
 	"strings"
 	"time"
 
-	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -168,31 +167,18 @@ func (c *RegistryClient) GetDigest(name string) string {
 	return digest
 }
 
-type parentController struct {
-	APIVersion string            `json:"apiVersion"`
-	Kind       string            `json:"kind"`
-	ObjectMeta metav1.ObjectMeta `json:"metadata"`
-	Spec       struct {
-		Template struct {
-			Spec v1.PodSpec
-		} `json:"template"`
-	} `json:"spec"`
-}
-
 // Config represent a imago configuration
 type Config struct {
 	cluster     *kubernetes.Clientset
 	reg         *RegistryClient
-	pods        *v1.PodList
-	replicasets *appsv1.ReplicaSetList
 	secretCache map[string]*v1.Secret
 	namespace   string
-	dryrun      bool
+	update      bool
 }
 
 // NewConfig initialize a new imago config
-func NewConfig(kubeconfig string, namespace string, allnamespaces bool, dryrun bool) *Config {
-	c := &Config{reg: NewRegistryClient(nil), dryrun: dryrun}
+func NewConfig(kubeconfig string, namespace string, allnamespaces bool, update bool) *Config {
+	c := &Config{reg: NewRegistryClient(nil), update: update}
 	var err error
 	var clusterConfig *rest.Config
 
@@ -242,39 +228,15 @@ func (c *Config) Update(fieldSelector, labelSelector string) {
 		log.Fatal(err)
 	}
 	for _, d := range deployments.Items {
-		images := c.getNewImages("Deployment", &d.ObjectMeta, &d.Spec.Template.Spec)
-		c.setImage(d.ObjectMeta.Namespace, "Deployment", d.ObjectMeta.Name, images)
+		c.setImages("Deployment", &d.ObjectMeta, &d.Spec.Template.Spec)
 	}
 	daemonsets, err := client.DaemonSets(c.namespace).List(opts)
 	if err != nil {
 		log.Fatal(err)
 	}
 	for _, ds := range daemonsets.Items {
-		images := c.getNewImages("DaemonSet", &ds.ObjectMeta, &ds.Spec.Template.Spec)
-		c.setImage(ds.ObjectMeta.Namespace, "DaemonSet", ds.ObjectMeta.Name, images)
+		c.setImages("DaemonSet", &ds.ObjectMeta, &ds.Spec.Template.Spec)
 	}
-}
-
-func (c *Config) getPods() *v1.PodList {
-	if c.pods == nil {
-		var err error
-		c.pods, err = c.cluster.CoreV1().Pods(c.namespace).List(metav1.ListOptions{FieldSelector: "status.phase=Running"})
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-	return c.pods
-}
-
-func (c *Config) getReplicaSets() *appsv1.ReplicaSetList {
-	if c.replicasets == nil {
-		var err error
-		c.replicasets, err = c.cluster.AppsV1().ReplicaSets(c.namespace).List(metav1.ListOptions{})
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-	return c.replicasets
 }
 
 func (c *Config) getSecret(namespace string, name string) *v1.Secret {
@@ -311,96 +273,117 @@ func (c *Config) setRegistryCredentials(namespace string, secrets []v1.LocalObje
 	}
 }
 
-func (c *Config) getNewImages(kind string, meta *metav1.ObjectMeta, spec *v1.PodSpec) map[string]string {
-	log.Printf("checking %s/%s:", kind, meta.Name)
-	result := make(map[string]string)
-	c.setRegistryCredentials(meta.Namespace, spec.ImagePullSecrets)
-	lastAppliedConfig := meta.GetAnnotations()[v1.LastAppliedConfigAnnotation]
-	if len(lastAppliedConfig) == 0 {
-		log.Printf("  no %s annotation, skipping", v1.LastAppliedConfigAnnotation)
-		return result
+type configAnnotationImageSpec struct {
+	Name  string `json:"name"`
+	Image string `json:"image"`
+}
+
+type configAnnotation struct {
+	Containers     []configAnnotationImageSpec `json:"containers"`
+	InitContainers []configAnnotationImageSpec `json:"initContainers"`
+}
+
+const imagoConfigAnnotation = "imago-config-spec"
+
+func mergeContainers(configContainers []configAnnotationImageSpec, containers []v1.Container) []configAnnotationImageSpec {
+	specImages := make(map[string]string)
+	for _, c := range containers {
+		specImages[c.Name] = c.Image
 	}
-	var obj parentController
-	err := json.Unmarshal([]byte(lastAppliedConfig), &obj)
+	re := regexp.MustCompile(".*@(sha256:.*)")
+	configImages := make(map[string]string)
+	for _, c := range configContainers {
+		// drop containers in spec but not in config
+		image := specImages[c.Name]
+		if image != "" {
+			match := re.FindStringSubmatch(image)
+			if len(match) > 1 {
+				// keep stored config
+				configImages[c.Name] = c.Image
+			} else {
+				// use newer image
+				configImages[c.Name] = specImages[c.Name]
+			}
+		}
+	}
+	for name, image := range specImages {
+		if configImages[name] == "" {
+			configImages[name] = image
+		}
+	}
+	result := make([]configAnnotationImageSpec, 0)
+	for name, image := range configImages {
+		result = append(result, configAnnotationImageSpec{
+			Name: name, Image: image})
+	}
+	return result
+}
+
+func getConfigAnontation(meta *metav1.ObjectMeta, spec *v1.PodSpec) *configAnnotation {
+	config := configAnnotation{}
+	rawConfig := meta.GetAnnotations()[imagoConfigAnnotation]
+	if len(rawConfig) > 0 {
+		err := json.Unmarshal([]byte(rawConfig), &config)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	config.Containers = mergeContainers(config.Containers, spec.Containers)
+	config.InitContainers = mergeContainers(config.InitContainers, spec.InitContainers)
+	return &config
+}
+
+func (c *Config) getUpdates(configContainers []configAnnotationImageSpec, containers []v1.Container) map[string]string {
+	re := regexp.MustCompile(".*@(sha256:.*)")
+	update := make(map[string]string)
+	for _, container := range configContainers {
+		match := re.FindStringSubmatch(container.Image)
+		if len(match) > 1 {
+			log.Printf("    %s ok (fixed digest)", container.Name)
+			continue
+		}
+		digest := c.reg.GetDigest(container.Image)
+		image := strings.Split(container.Image, ":")[0] + "@" + digest
+		for _, specContainer := range containers {
+			if specContainer.Name != container.Name {
+				continue
+			}
+			if image != specContainer.Image {
+				log.Printf("    %s need to be updated from %s to %s", container.Name, specContainer.Image, image)
+				update[container.Name] = image
+			} else {
+				log.Printf("    %s ok", container.Name)
+			}
+		}
+	}
+	return update
+}
+
+func (c *Config) setImages(kind string, meta *metav1.ObjectMeta, spec *v1.PodSpec) {
+	log.Printf("checking %s/%s/%s", meta.Namespace, kind, meta.Name)
+	c.setRegistryCredentials(meta.Namespace, spec.ImagePullSecrets)
+	config := getConfigAnontation(meta, spec)
+	updateContainers := c.getUpdates(config.Containers, spec.Containers)
+	updateInitContainers := c.getUpdates(config.InitContainers, spec.InitContainers)
+	if c.update || (len(updateContainers) == 0 && len(updateInitContainers) == 0) {
+		return
+	}
+	log.Printf("update %s/%s/%s", meta.Namespace, kind, meta.Name)
+	jsonConfig, err := json.Marshal(config)
 	if err != nil {
 		log.Fatal(err)
 	}
-	sha256Re := regexp.MustCompile("docker-pullable://.*@(sha256:.*)")
-	runningImages := c.getRunningImagesFor(&obj)
-	if len(runningImages) == 0 {
-		log.Printf("  no running pod found (rolling update in progress ?)")
-		return result
-	}
-	for _, specContainer := range obj.Spec.Template.Spec.Containers {
-		for container, running := range runningImages {
-			if specContainer.Name != container {
-				continue
-			}
-			digest := c.reg.GetDigest(specContainer.Image)
-			runningDigest := sha256Re.FindStringSubmatch(running)[1]
-			if digest != runningDigest {
-				result[container] = strings.Split(specContainer.Image, ":")[0] + "@" + digest
-				log.Printf("  %s has to be updated to %s", container, result[container])
-			} else {
-				log.Printf("  %s ok", container)
-			}
+	jsonConfigString := string(jsonConfig)
+	var setAnnotation = func(meta *metav1.ObjectMeta) {
+		if meta.Annotations == nil {
+			meta.Annotations = make(map[string]string)
 		}
+		meta.Annotations[imagoConfigAnnotation] = jsonConfigString
 	}
-	return result
-}
-
-func (c *Config) getRunningImagesFor(obj *parentController) map[string]string {
-	var pods []v1.Pod
-	for _, pod := range c.getPods().Items {
-		if pod.ObjectMeta.Namespace != obj.ObjectMeta.Namespace {
-			continue
-		}
-		for _, owner := range pod.OwnerReferences {
-			if owner.Kind == "ReplicaSet" && obj.Kind == "Deployment" {
-				for _, rs := range c.getReplicaSets().Items {
-					if rs.ObjectMeta.Namespace != obj.ObjectMeta.Namespace || rs.ObjectMeta.Name != owner.Name {
-						continue
-					}
-					for _, rsOwner := range rs.OwnerReferences {
-						if rsOwner.Kind == obj.Kind && rsOwner.Name == obj.ObjectMeta.Name {
-							pods = append(pods, pod)
-						}
-					}
-				}
-			} else if owner.Kind == obj.Kind && owner.Name == obj.ObjectMeta.Name {
-				pods = append(pods, pod)
-			}
-		}
-	}
-	result := make(map[string]string)
-	for _, pod := range pods {
-		for _, container := range pod.Status.ContainerStatuses {
-			if result[container.Name] != "" {
-				log.Fatal("Two different running images")
-			}
-			result[container.Name] = container.ImageID
-		}
-	}
-	return result
-}
-
-func mapKeys(m map[string]string) []string {
-	result := make([]string, 0, len(m))
-	for key := range m {
-		result = append(result, key)
-	}
-	return result
-}
-
-func (c *Config) setImage(namespace, kind, name string, images map[string]string) {
-	if len(images) == 0 || c.dryrun {
-		return
-	}
-	log.Printf("Update %s/%s/%s set images %s", namespace, kind, name, strings.Join(mapKeys(images), ","))
-	var setPodTemplateSpecImage = func(spec *v1.PodTemplateSpec) {
-		for i, container := range spec.Spec.Containers {
-			if newImage, ok := images[container.Name]; ok {
-				spec.Spec.Containers[i].Image = newImage
+	var updateSpec = func(containers []v1.Container, update map[string]string) {
+		for i, container := range containers {
+			if newImage, ok := update[container.Name]; ok {
+				containers[i].Image = newImage
 			}
 		}
 	}
@@ -408,23 +391,27 @@ func (c *Config) setImage(namespace, kind, name string, images map[string]string
 	switch kind {
 	case "Deployment":
 		updateResource = func() error {
-			client := c.cluster.AppsV1().Deployments(namespace)
-			resource, err := client.Get(name, metav1.GetOptions{})
+			client := c.cluster.AppsV1().Deployments(meta.Namespace)
+			resource, err := client.Get(meta.Name, metav1.GetOptions{})
 			if err != nil {
 				log.Fatal(err)
 			}
-			setPodTemplateSpecImage(&resource.Spec.Template)
+			setAnnotation(&resource.ObjectMeta)
+			updateSpec(resource.Spec.Template.Spec.Containers, updateContainers)
+			updateSpec(resource.Spec.Template.Spec.InitContainers, updateInitContainers)
 			_, err = client.Update(resource)
 			return err
 		}
 	case "DaemonSet":
 		updateResource = func() error {
-			client := c.cluster.AppsV1().DaemonSets(namespace)
-			resource, err := client.Get(name, metav1.GetOptions{})
+			client := c.cluster.AppsV1().DaemonSets(meta.Namespace)
+			resource, err := client.Get(meta.Name, metav1.GetOptions{})
 			if err != nil {
 				log.Fatal(err)
 			}
-			setPodTemplateSpecImage(&resource.Spec.Template)
+			setAnnotation(&resource.ObjectMeta)
+			updateSpec(resource.Spec.Template.Spec.Containers, updateContainers)
+			updateSpec(resource.Spec.Template.Spec.InitContainers, updateInitContainers)
 			_, err = client.Update(resource)
 			return err
 		}
@@ -476,14 +463,14 @@ func main() {
 	var fieldSelector string
 	var allnamespaces bool
 	var namespace string
-	var dryrun bool
+	var update bool
 	flag.StringVar(&kubeconfig, "kubeconfig", filepath.Join(homeDir(), ".kube", "config"), "kube config file")
 	flag.StringVar(&namespace, "n", "", "Check deployments and daemonsets in given namespace (default to current namespace)")
 	flag.StringVar(&labelSelector, "l", "", "Kubernetes labels selectors\nWarning: applies to Deployment and DaemonSet, not pods !")
 	flag.StringVar(&fieldSelector, "field-selector", "", "Kubernetes field-selector\nexample: metadata.name=myapp")
 	flag.BoolVar(&allnamespaces, "all-namespaces", false, "Check deployments and daemonsets on all namespaces (default false)")
-	flag.BoolVar(&dryrun, "dry-run", false, "dry run mode. Do not update any deployments and daemonsets (default false)")
+	flag.BoolVar(&update, "update", false, "update deployments and daemonsets to use newer images (default false)")
 	flag.Parse()
-	c := NewConfig(kubeconfig, namespace, allnamespaces, dryrun)
+	c := NewConfig(kubeconfig, namespace, allnamespaces, update)
 	c.Update(fieldSelector, labelSelector)
 }

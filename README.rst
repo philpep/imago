@@ -9,31 +9,24 @@ cluster.
 it also refer to ``image`` and ``go`` (golang).
 
 ``imago`` looks for kubernetes ``Deployments`` and ``DaemonSets``
-configuration and check if running ``Pods`` use the correct image sha256 digest
-from the docker repository and update ``Deployments`` or ``DaemonSets`` to use the
-correct image.
+configuration and update them to use the latest image sha256 digest
+from the docker repository.
 
-Users and/or CI might trigger rebuild of images (for instance in case of
-security update). For a given docker image tag the actual content may be
-updated, ``imago`` ensure you cluster is running the latest build.
+This is useful to handle the following cases:
+
+* image is rebuilt for security fixes
+* ensure all pods use exactly the same image
+* image is rebuilt by CI for continuous delivery
+
+``imago`` ensure your pods are running the latest build.
 
 How it works ?
 ==============
 
-``imago`` looks for ``Deployments`` and ``DaemonSets`` configuration,
-and especially the annotation
-``kubectl.kubernetes.io/last-applied-configuration`` which contains the original
-deployment specification.
-
-Then it looks running ``Pods`` corresponding to the ``Deployment`` or ``DaemonSet``
-and looks the running containers sha256 digests in ``.status.containerStatuses[].imageID``.
-
-Then it make a request to the registry to get the sha256 digest of the image,
-eventually by using registry credentials stored used in the deployment.
-
-Then it compare the sha256 digests and if they are not matching it ``update`` the
-``Deployment`` or ``DaemonSet`` to use the expected image with
-``registry/image@sha256:....`` notation.
+``imago`` looks for ``Deployments`` and ``DaemonSets`` configuration, get the
+latest sha256 digest from registry and update containers specifications to set
+image to the corresponding ``registry/image@sha256:...`` notation.
+It track the original image specification in the ``imago-config-spec`` annotation.
 
 Arguments
 =========
@@ -44,8 +37,8 @@ Arguments
     Usage of imago:
       -all-namespaces
             Check deployments and daemonsets on all namespaces (default false)
-      -dry-run
-            dry run mode. Do not update any deployments and daemonsets (default false)
+      -update
+            update deployments and daemonsets to use newer images (default false)
       -field-selector string
             Kubernetes field-selector
             example: metadata.name=myapp
@@ -63,20 +56,20 @@ Example output
 
 ::
 
-    $ imago
-    2019/02/11 17:55:21 checking Deployment/aptly:
+    $ imago --update
+    2019/02/11 17:55:21 checking default/Deployment/aptly:
     2019/02/11 17:55:21   aptly ok
     2019/02/11 17:55:21   nginx ok
-    2019/02/11 17:55:22 checking Deployment/kibana:
+    2019/02/11 17:55:22 checking default/Deployment/kibana:
     2019/02/11 17:55:22   kibana ok
     2019/02/11 17:55:22   nginx ok
-    2019/02/11 17:55:22 checking Deployment/philpep.org-gitweb:
-    2019/02/11 17:55:22   gitweb has to be updated to r.in.philpep.org/gitweb@sha256:ff00caed3525dec5d2e57ffe210a16630ed9d3c31bf611f2987533eba4a0cbbe
+    2019/02/11 17:55:22 checking default/Deployment/philpep.org-gitweb:
+    2019/02/11 17:55:22   gitweb need to be updated from r.in.philpep.org/gitweb to r.in.philpep.org/gitweb@sha256:ff00caed3525dec5d2e57ffe210a16630ed9d3c31bf611f2987533eba4a0cbbe
     2019/02/11 17:55:22   nginx ok
-    2019/02/11 17:55:22 update Deployment/philpep.org images gitweb
+    2019/02/11 17:55:22 update default/Deployment/philpep.org
     2019/02/11 17:55:22 checking DaemonSet/fluentd:
-    2019/02/11 17:55:22   fluentd has to be updated to r.in.philpep.org/fluentd@sha256:6a92af8a9db2ca243e0eba8d401cec11b124822e15b558b35ab45825ed4d1f54
-    2019/02/11 17:55:22 update DaemonSet/fluentd images fluentd
+    2019/02/11 17:55:22   fluentd has to be updated from r.in.philpep.org/fluentd to r.in.philpep.org/fluentd@sha256:6a92af8a9db2ca243e0eba8d401cec11b124822e15b558b35ab45825ed4d1f54
+    2019/02/11 17:55:22 update default/DaemonSet/fluentd
 
 
 Install and run

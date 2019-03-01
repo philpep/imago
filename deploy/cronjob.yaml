@@ -20,3 +20,4 @@ spec:
             - name: imago
               image: philpep/imago
               imagePullPolicy: Always
+              args: ["--update"]
