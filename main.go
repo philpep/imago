@@ -365,7 +365,7 @@ func (c *Config) setImages(kind string, meta *metav1.ObjectMeta, spec *v1.PodSpe
 	config := getConfigAnontation(meta, spec)
 	updateContainers := c.getUpdates(config.Containers, spec.Containers)
 	updateInitContainers := c.getUpdates(config.InitContainers, spec.InitContainers)
-	if c.update || (len(updateContainers) == 0 && len(updateInitContainers) == 0) {
+	if !c.update || (len(updateContainers) == 0 && len(updateInitContainers) == 0) {
 		return
 	}
 	log.Printf("update %s/%s/%s", meta.Namespace, kind, meta.Name)
