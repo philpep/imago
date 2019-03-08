@@ -363,8 +363,8 @@ func (c *Config) setImages(kind string, meta *metav1.ObjectMeta, spec *v1.PodSpe
 	log.Printf("checking %s/%s/%s", meta.Namespace, kind, meta.Name)
 	c.setRegistryCredentials(meta.Namespace, spec.ImagePullSecrets)
 	config := getConfigAnontation(meta, spec)
-	updateContainers := c.getUpdates(config.Containers, spec.Containers)
 	updateInitContainers := c.getUpdates(config.InitContainers, spec.InitContainers)
+	updateContainers := c.getUpdates(config.Containers, spec.Containers)
 	if !c.update || (len(updateContainers) == 0 && len(updateInitContainers) == 0) {
 		return
 	}
