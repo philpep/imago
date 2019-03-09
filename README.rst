@@ -37,8 +37,8 @@ Arguments
     Usage of imago:
       -all-namespaces
             Check deployments and daemonsets on all namespaces (default false)
-      -update
-            update deployments and daemonsets to use newer images (default false)
+      -check-pods
+            check image digests of running pods (default false)
       -field-selector string
             Kubernetes field-selector
             example: metadata.name=myapp
@@ -49,6 +49,14 @@ Arguments
             Warning: applies to Deployment and DaemonSet, not pods !
       -n string
             Check deployments and daemonsets in given namespace (default to current namespace)
+      -update
+            update deployments and daemonsets to use newer images (default false)
+
+
+By default, ``imago`` doesn't update your deployments, unless invoked with ``--update``.
+
+The ``--check-pods`` is a less intrusive mode where update is done only if one
+of the running pods doesn't run on latest digest image.
 
 
 Example output

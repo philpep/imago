@@ -174,11 +174,12 @@ type Config struct {
 	secretCache map[string]*v1.Secret
 	namespace   string
 	update      bool
+	checkpods   bool
 }
 
 // NewConfig initialize a new imago config
-func NewConfig(kubeconfig string, namespace string, allnamespaces bool, update bool) *Config {
-	c := &Config{reg: NewRegistryClient(nil), update: update}
+func NewConfig(kubeconfig string, namespace string, allnamespaces bool, update bool, checkpods bool) *Config {
+	c := &Config{reg: NewRegistryClient(nil), update: update, checkpods: checkpods}
 	var err error
 	var clusterConfig *rest.Config
 
@@ -228,14 +229,14 @@ func (c *Config) Update(fieldSelector, labelSelector string) {
 		log.Fatal(err)
 	}
 	for _, d := range deployments.Items {
-		c.setImages("Deployment", &d.ObjectMeta, &d.Spec.Template.Spec)
+		c.setImages("Deployment", &d.ObjectMeta, &d.Spec.Template)
 	}
 	daemonsets, err := client.DaemonSets(c.namespace).List(opts)
 	if err != nil {
 		log.Fatal(err)
 	}
 	for _, ds := range daemonsets.Items {
-		c.setImages("DaemonSet", &ds.ObjectMeta, &ds.Spec.Template.Spec)
+		c.setImages("DaemonSet", &ds.ObjectMeta, &ds.Spec.Template)
 	}
 }
 
@@ -333,7 +334,28 @@ func getConfigAnontation(meta *metav1.ObjectMeta, spec *v1.PodSpec) *configAnnot
 	return &config
 }
 
-func (c *Config) getUpdates(configContainers []configAnnotationImageSpec, containers []v1.Container) map[string]string {
+func needUpdate(name string, image string, specImage string, running map[string]string) bool {
+	if len(running) == 0 {
+		if image != specImage {
+			log.Printf("    %s need to be updated from %s to %s", name, specImage, image)
+			return true
+		}
+		log.Printf("    %s ok", name)
+		return false
+	}
+	result := false
+	for pod, digest := range running {
+		if digest != image {
+			log.Printf("    %s on %s need to be updated from %s to %s", name, pod, digest, image)
+			result = true
+		} else {
+			log.Printf("    %s on %s ok", name, pod)
+		}
+	}
+	return result
+}
+
+func (c *Config) getUpdates(configContainers []configAnnotationImageSpec, containers []v1.Container, running map[string]map[string]string) map[string]string {
 	re := regexp.MustCompile(".*@(sha256:.*)")
 	update := make(map[string]string)
 	for _, container := range configContainers {
@@ -348,23 +370,89 @@ func (c *Config) getUpdates(configContainers []configAnnotationImageSpec, contai
 			if specContainer.Name != container.Name {
 				continue
 			}
-			if image != specContainer.Image {
-				log.Printf("    %s need to be updated from %s to %s", container.Name, specContainer.Image, image)
+			if needUpdate(container.Name, image, specContainer.Image, running[container.Name]) {
 				update[container.Name] = image
-			} else {
-				log.Printf("    %s ok", container.Name)
 			}
 		}
 	}
 	return update
 }
 
-func (c *Config) setImages(kind string, meta *metav1.ObjectMeta, spec *v1.PodSpec) {
+func getSelector(labels map[string]string) string {
+	filters := make([]string, 0)
+	for key, value := range labels {
+		filters = append(filters, fmt.Sprintf("%s=%s", key, value))
+	}
+	return strings.Join(filters, ", ")
+}
+
+func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) (map[string]map[string]string, map[string]map[string]string) {
+	runningInitContainers, runningContainers := make(map[string]map[string]string), make(map[string]map[string]string)
+	if !c.checkpods {
+		return runningInitContainers, runningContainers
+	}
+	labelSelector := getSelector(template.ObjectMeta.Labels)
+	running, err := c.cluster.CoreV1().Pods(meta.Namespace).List(metav1.ListOptions{LabelSelector: labelSelector})
+	if err != nil {
+		log.Fatal(err)
+	}
+	match := func(pod *v1.Pod) bool {
+		for _, owner := range pod.OwnerReferences {
+			switch owner.Kind {
+			case "ReplicaSet":
+				rs, err := c.cluster.AppsV1().ReplicaSets(meta.Namespace).Get(owner.Name, metav1.GetOptions{})
+				if err != nil {
+					log.Fatal(err)
+				}
+				for _, rsOwner := range rs.OwnerReferences {
+					if rsOwner.Kind == kind && rsOwner.Name == meta.Name {
+						return true
+					}
+				}
+			case "DaemonSet":
+				if owner.Kind == kind && owner.Name == meta.Name {
+					return true
+				}
+			default:
+				log.Fatalf("unhandled %s", owner.Kind)
+			}
+		}
+		return false
+	}
+	re := regexp.MustCompile(".*://(.*@sha256:.*)")
+	addImage := func(containers map[string]map[string]string, name string, podName string, image string) {
+		reMatch := re.FindStringSubmatch(image)
+		if len(reMatch) < 2 {
+			log.Printf("Unable to parse image digest %s", image)
+			return
+		}
+		if containers[name] == nil {
+			containers[name] = make(map[string]string)
+		}
+		containers[name][podName] = reMatch[1]
+	}
+	for _, pod := range running.Items {
+		if match(&pod) {
+			runningInitContainers[pod.Name] = make(map[string]string)
+			runningContainers[pod.Name] = make(map[string]string)
+			for _, container := range pod.Status.InitContainerStatuses {
+				addImage(runningInitContainers, container.Name, pod.Name, container.ImageID)
+			}
+			for _, container := range pod.Status.ContainerStatuses {
+				addImage(runningContainers, container.Name, pod.Name, container.ImageID)
+			}
+		}
+	}
+	return runningInitContainers, runningContainers
+}
+
+func (c *Config) setImages(kind string, meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) {
 	log.Printf("checking %s/%s/%s", meta.Namespace, kind, meta.Name)
-	c.setRegistryCredentials(meta.Namespace, spec.ImagePullSecrets)
-	config := getConfigAnontation(meta, spec)
-	updateInitContainers := c.getUpdates(config.InitContainers, spec.InitContainers)
-	updateContainers := c.getUpdates(config.Containers, spec.Containers)
+	c.setRegistryCredentials(meta.Namespace, template.Spec.ImagePullSecrets)
+	config := getConfigAnontation(meta, &template.Spec)
+	runningInitContainers, runningContainers := c.getRunningContainers(kind, meta, template)
+	updateInitContainers := c.getUpdates(config.InitContainers, template.Spec.InitContainers, runningInitContainers)
+	updateContainers := c.getUpdates(config.Containers, template.Spec.Containers, runningContainers)
 	if !c.update || (len(updateContainers) == 0 && len(updateInitContainers) == 0) {
 		return
 	}
@@ -464,13 +552,15 @@ func main() {
 	var allnamespaces bool
 	var namespace string
 	var update bool
+	var checkpods bool
 	flag.StringVar(&kubeconfig, "kubeconfig", filepath.Join(homeDir(), ".kube", "config"), "kube config file")
 	flag.StringVar(&namespace, "n", "", "Check deployments and daemonsets in given namespace (default to current namespace)")
 	flag.StringVar(&labelSelector, "l", "", "Kubernetes labels selectors\nWarning: applies to Deployment and DaemonSet, not pods !")
 	flag.StringVar(&fieldSelector, "field-selector", "", "Kubernetes field-selector\nexample: metadata.name=myapp")
 	flag.BoolVar(&allnamespaces, "all-namespaces", false, "Check deployments and daemonsets on all namespaces (default false)")
 	flag.BoolVar(&update, "update", false, "update deployments and daemonsets to use newer images (default false)")
+	flag.BoolVar(&checkpods, "check-pods", false, "check image digests of running pods (default false)")
 	flag.Parse()
-	c := NewConfig(kubeconfig, namespace, allnamespaces, update)
+	c := NewConfig(kubeconfig, namespace, allnamespaces, update, checkpods)
 	c.Update(fieldSelector, labelSelector)
 }
