@@ -76,7 +76,7 @@ func getBearerToken(client *http.Client, authHeader string) (string, error) {
 		authInfo[match[1]] = match[2]
 	}
 	if authInfo["realm"] == "" || authInfo["service"] == "" || authInfo["scope"] == "" {
-		return "", fmt.Errorf("Unexpected or missing auth headers: %s", authInfo)
+		return "", fmt.Errorf("unexpected or missing auth headers: %s", authInfo)
 	}
 	req, err := http.NewRequest("GET", authInfo["realm"], nil)
 	if err != nil {
@@ -92,7 +92,7 @@ func getBearerToken(client *http.Client, authHeader string) (string, error) {
 	}
 	defer closeResource(resp.Body)
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("Error while requesting auth token on %s: %s", req.URL, resp.Status)
+		return "", fmt.Errorf("error while requesting auth token on %s: %s", req.URL, resp.Status)
 	}
 	var result struct {
 		Token string `json:"token"`
@@ -131,6 +131,9 @@ func NewRegistryClient(client *http.Client) *RegistryClient {
 // GetDigest return the docker digest of given image name
 func (c *RegistryClient) GetDigest(name string) (string, error) {
 	digestURL, err := getDigestURL(name)
+	if err != nil {
+		return "", err
+	}
 	req, err := http.NewRequest("HEAD", digestURL, nil)
 	if err != nil {
 		return "", err
@@ -162,11 +165,11 @@ func (c *RegistryClient) GetDigest(name string) (string, error) {
 		defer closeResource(resp.Body)
 	}
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("Unexpected response while requesting %s: %s", digestURL, resp.Status)
+		return "", fmt.Errorf("unexpected response while requesting %s: %s", digestURL, resp.Status)
 	}
 	digest := resp.Header.Get("Docker-Content-Digest")
 	if digest == "" {
-		return "", fmt.Errorf("No Docker-Content-Digest in response headers for %s", digestURL)
+		return "", fmt.Errorf("no Docker-Content-Digest in response headers for %s", digestURL)
 	}
 	return digest, nil
 }
@@ -199,7 +202,7 @@ func NewConfig(kubeconfig string, namespace string, allnamespaces bool, update b
 				c.namespace = outClusterNamespace(kubeconfig)
 			}
 			if c.namespace == "" {
-				return fmt.Errorf("Could not determine current namespace")
+				return fmt.Errorf("could not determine current namespace")
 			}
 		}
 		return nil
@@ -239,7 +242,7 @@ func (c *Config) Update(fieldSelector, labelSelector string) error {
 	}
 	failed := make([]string, 0)
 	for _, d := range deployments.Items {
-		if err := c.setImages("Deployment", &d.ObjectMeta, &d.Spec.Template); err != nil {
+		if err = c.setImages("Deployment", &d.ObjectMeta, &d.Spec.Template); err != nil {
 			log.Print(err)
 			failed = append(failed, fmt.Sprintf("failed to check %s/Deployment/%s: %s", d.ObjectMeta.Namespace, d.Name, err))
 		}
@@ -539,7 +542,7 @@ func (c *Config) setImages(kind string, meta *metav1.ObjectMeta, template *v1.Po
 			return err
 		}
 	default:
-		return fmt.Errorf("Unhandled kind %s", kind)
+		return fmt.Errorf("unhandled kind %s", kind)
 	}
 	if err := retry.RetryOnConflict(retry.DefaultRetry, updateResource); err != nil {
 		return err
