@@ -41,14 +41,14 @@ import (
 func closeResource(r io.Closer) {
 	err := r.Close()
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
 	}
 }
 
-func getDigestURL(name string) string {
+func getDigestURL(name string) (string, error) {
 	u, err := url.Parse(fmt.Sprintf("https://%s", name))
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 	host := u.Host
 	path := u.Path
@@ -65,10 +65,10 @@ func getDigestURL(name string) string {
 		s := strings.Split(path, ":")
 		path, tag = s[0], s[1]
 	}
-	return fmt.Sprintf("%s://%s/v2%s/manifests/%s", u.Scheme, host, path, tag)
+	return fmt.Sprintf("%s://%s/v2%s/manifests/%s", u.Scheme, host, path, tag), nil
 }
 
-func getBearerToken(client *http.Client, authHeader string) string {
+func getBearerToken(client *http.Client, authHeader string) (string, error) {
 	r := regexp.MustCompile("(.*)=\"(.*)\"")
 	authInfo := make(map[string]string)
 	for _, part := range strings.Split(strings.Split(authHeader, " ")[1], ",") {
@@ -76,11 +76,11 @@ func getBearerToken(client *http.Client, authHeader string) string {
 		authInfo[match[1]] = match[2]
 	}
 	if authInfo["realm"] == "" || authInfo["service"] == "" || authInfo["scope"] == "" {
-		log.Fatalf("Unexpected or missing auth headers: %s", authInfo)
+		return "", fmt.Errorf("Unexpected or missing auth headers: %s", authInfo)
 	}
 	req, err := http.NewRequest("GET", authInfo["realm"], nil)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 	q := req.URL.Query()
 	q.Add("service", authInfo["service"])
@@ -88,24 +88,24 @@ func getBearerToken(client *http.Client, authHeader string) string {
 	req.URL.RawQuery = q.Encode()
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 	defer closeResource(resp.Body)
 	if resp.StatusCode != 200 {
-		log.Fatalf("Error while requesting auth token on %s: %s", req.URL, resp.Status)
+		return "", fmt.Errorf("Error while requesting auth token on %s: %s", req.URL, resp.Status)
 	}
 	var result struct {
 		Token string `json:"token"`
 	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 	err = json.Unmarshal(body, &result)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
-	return result.Token
+	return result.Token, nil
 }
 
 // RegistryClient represent a docker client
@@ -129,42 +129,46 @@ func NewRegistryClient(client *http.Client) *RegistryClient {
 }
 
 // GetDigest return the docker digest of given image name
-func (c *RegistryClient) GetDigest(name string) string {
-	digestURL := getDigestURL(name)
+func (c *RegistryClient) GetDigest(name string) (string, error) {
+	digestURL, err := getDigestURL(name)
 	req, err := http.NewRequest("HEAD", digestURL, nil)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 	req.Header.Add("Accept", "application/vnd.docker.distribution.manifest.v2+json")
 	u, err := url.Parse(digestURL)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 	if c.Auth[u.Host] != "" {
 		req.Header.Add("Authorization", fmt.Sprintf("Basic %s", c.Auth[u.Host]))
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 	defer closeResource(resp.Body)
 	authenticate := resp.Header.Get("www-authenticate")
 	if resp.StatusCode == 401 && strings.HasPrefix(authenticate, "Bearer ") {
-		req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", getBearerToken(c.client, authenticate)))
+		token, err := getBearerToken(c.client, authenticate)
+		if err != nil {
+			return "", err
+		}
+		req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", token))
 		resp, err = c.client.Do(req)
 		if err != nil {
-			log.Fatal(err)
+			return "", err
 		}
 		defer closeResource(resp.Body)
 	}
 	if resp.StatusCode != 200 {
-		log.Fatalf("Unexpected response while requesting %s: %s", digestURL, resp.Status)
+		return "", fmt.Errorf("Unexpected response while requesting %s: %s", digestURL, resp.Status)
 	}
 	digest := resp.Header.Get("Docker-Content-Digest")
 	if digest == "" {
-		log.Fatalf("No Docker-Content-Digest in response headers for %s", digestURL)
+		return "", fmt.Errorf("No Docker-Content-Digest in response headers for %s", digestURL)
 	}
-	return digest
+	return digest, nil
 }
 
 // Config represent a imago configuration
@@ -178,12 +182,12 @@ type Config struct {
 }
 
 // NewConfig initialize a new imago config
-func NewConfig(kubeconfig string, namespace string, allnamespaces bool, update bool, checkpods bool) *Config {
+func NewConfig(kubeconfig string, namespace string, allnamespaces bool, update bool, checkpods bool) (*Config, error) {
 	c := &Config{reg: NewRegistryClient(nil), update: update, checkpods: checkpods}
 	var err error
 	var clusterConfig *rest.Config
 
-	setNamespace := func(incluster bool) {
+	setNamespace := func(incluster bool) error {
 		if allnamespaces {
 			c.namespace = ""
 		} else if namespace != "" {
@@ -195,52 +199,67 @@ func NewConfig(kubeconfig string, namespace string, allnamespaces bool, update b
 				c.namespace = outClusterNamespace(kubeconfig)
 			}
 			if c.namespace == "" {
-				log.Fatal("Could not determine current namespace")
+				return fmt.Errorf("Could not determine current namespace")
 			}
 		}
+		return nil
 	}
 
 	if inClusterClientPossible() {
 		clusterConfig, err = rest.InClusterConfig()
 		if err != nil {
-			log.Fatal(err)
+			return nil, err
 		}
-		setNamespace(true)
+		if err = setNamespace(true); err != nil {
+			return nil, err
+		}
 	} else {
 		clusterConfig, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 		if err != nil {
-			log.Fatal(err)
+			return nil, err
 		}
-		setNamespace(false)
+		if err = setNamespace(false); err != nil {
+			return nil, err
+		}
 	}
 	c.cluster, err = kubernetes.NewForConfig(clusterConfig)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
-	return c
+	return c, nil
 }
 
 // Update Deployment and DaemonSet matching given selectors
-func (c *Config) Update(fieldSelector, labelSelector string) {
+func (c *Config) Update(fieldSelector, labelSelector string) error {
 	client := c.cluster.AppsV1()
 	opts := metav1.ListOptions{FieldSelector: fieldSelector, LabelSelector: labelSelector}
 	deployments, err := client.Deployments(c.namespace).List(opts)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
+	failed := make([]string, 0)
 	for _, d := range deployments.Items {
-		c.setImages("Deployment", &d.ObjectMeta, &d.Spec.Template)
+		if err := c.setImages("Deployment", &d.ObjectMeta, &d.Spec.Template); err != nil {
+			log.Print(err)
+			failed = append(failed, fmt.Sprintf("failed to check %s/Deployment/%s: %s", d.ObjectMeta.Namespace, d.Name, err))
+		}
 	}
 	daemonsets, err := client.DaemonSets(c.namespace).List(opts)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	for _, ds := range daemonsets.Items {
-		c.setImages("DaemonSet", &ds.ObjectMeta, &ds.Spec.Template)
+		if err := c.setImages("DaemonSet", &ds.ObjectMeta, &ds.Spec.Template); err != nil {
+			failed = append(failed, fmt.Sprintf("failed to check %s/DaemonSet/%s: %s", ds.ObjectMeta.Namespace, ds.Name, err))
+		}
 	}
+	if len(failed) > 0 {
+		return fmt.Errorf(strings.Join(failed, "\n"))
+	}
+	return nil
 }
 
-func (c *Config) getSecret(namespace string, name string) *v1.Secret {
+func (c *Config) getSecret(namespace string, name string) (*v1.Secret, error) {
 	key := fmt.Sprintf("%s/%s", namespace, name)
 	if c.secretCache == nil {
 		c.secretCache = make(map[string]*v1.Secret)
@@ -248,14 +267,14 @@ func (c *Config) getSecret(namespace string, name string) *v1.Secret {
 	if c.secretCache[key] == nil {
 		secret, err := c.cluster.CoreV1().Secrets(namespace).Get(name, metav1.GetOptions{})
 		if err != nil {
-			log.Fatal(err)
+			return nil, err
 		}
 		c.secretCache[key] = secret
 	}
-	return c.secretCache[key]
+	return c.secretCache[key], nil
 }
 
-func (c *Config) setRegistryCredentials(namespace string, secrets []v1.LocalObjectReference) {
+func (c *Config) setRegistryCredentials(namespace string, secrets []v1.LocalObjectReference) error {
 	c.reg.Auth = make(map[string]string)
 	var dockerconfig struct {
 		Auths map[string]struct {
@@ -263,15 +282,19 @@ func (c *Config) setRegistryCredentials(namespace string, secrets []v1.LocalObje
 		} `json:"auths"`
 	}
 	for _, secret := range secrets {
-		err := json.Unmarshal(c.getSecret(namespace, secret.Name).Data[v1.DockerConfigJsonKey],
-			&dockerconfig)
+		secret, err := c.getSecret(namespace, secret.Name)
 		if err != nil {
-			log.Fatal(err)
+			return err
+		}
+		err = json.Unmarshal(secret.Data[v1.DockerConfigJsonKey], &dockerconfig)
+		if err != nil {
+			return err
 		}
 		for host, auth := range dockerconfig.Auths {
 			c.reg.Auth[host] = auth.Auth
 		}
 	}
+	return nil
 }
 
 type configAnnotationImageSpec struct {
@@ -320,18 +343,18 @@ func mergeContainers(configContainers []configAnnotationImageSpec, containers []
 	return result
 }
 
-func getConfigAnontation(meta *metav1.ObjectMeta, spec *v1.PodSpec) *configAnnotation {
+func getConfigAnontation(meta *metav1.ObjectMeta, spec *v1.PodSpec) (*configAnnotation, error) {
 	config := configAnnotation{}
 	rawConfig := meta.GetAnnotations()[imagoConfigAnnotation]
 	if len(rawConfig) > 0 {
 		err := json.Unmarshal([]byte(rawConfig), &config)
 		if err != nil {
-			log.Fatal(err)
+			return nil, err
 		}
 	}
 	config.Containers = mergeContainers(config.Containers, spec.Containers)
 	config.InitContainers = mergeContainers(config.InitContainers, spec.InitContainers)
-	return &config
+	return &config, nil
 }
 
 func needUpdate(name string, image string, specImage string, running map[string]string) bool {
@@ -364,7 +387,11 @@ func (c *Config) getUpdates(configContainers []configAnnotationImageSpec, contai
 			log.Printf("    %s ok (fixed digest)", container.Name)
 			continue
 		}
-		digest := c.reg.GetDigest(container.Image)
+		digest, err := c.reg.GetDigest(container.Image)
+		if err != nil {
+			log.Printf("    %s unable to get digest: %s", container.Name, err)
+			continue
+		}
 		image := strings.Split(container.Image, ":")[0] + "@" + digest
 		for _, specContainer := range containers {
 			if specContainer.Name != container.Name {
@@ -386,15 +413,15 @@ func getSelector(labels map[string]string) string {
 	return strings.Join(filters, ", ")
 }
 
-func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) (map[string]map[string]string, map[string]map[string]string) {
+func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) (map[string]map[string]string, map[string]map[string]string, error) {
 	runningInitContainers, runningContainers := make(map[string]map[string]string), make(map[string]map[string]string)
 	if !c.checkpods {
-		return runningInitContainers, runningContainers
+		return runningInitContainers, runningContainers, nil
 	}
 	labelSelector := getSelector(template.ObjectMeta.Labels)
 	running, err := c.cluster.CoreV1().Pods(meta.Namespace).List(metav1.ListOptions{LabelSelector: labelSelector})
 	if err != nil {
-		log.Fatal(err)
+		return runningInitContainers, runningContainers, err
 	}
 	match := func(pod *v1.Pod) bool {
 		for _, owner := range pod.OwnerReferences {
@@ -402,7 +429,8 @@ func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, temp
 			case "ReplicaSet":
 				rs, err := c.cluster.AppsV1().ReplicaSets(meta.Namespace).Get(owner.Name, metav1.GetOptions{})
 				if err != nil {
-					log.Fatal(err)
+					log.Print(err)
+					continue
 				}
 				for _, rsOwner := range rs.OwnerReferences {
 					if rsOwner.Kind == kind && rsOwner.Name == meta.Name {
@@ -413,8 +441,6 @@ func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, temp
 				if owner.Kind == kind && owner.Name == meta.Name {
 					return true
 				}
-			default:
-				log.Fatalf("unhandled %s", owner.Kind)
 			}
 		}
 		return false
@@ -443,23 +469,32 @@ func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, temp
 			}
 		}
 	}
-	return runningInitContainers, runningContainers
+	return runningInitContainers, runningContainers, nil
 }
 
-func (c *Config) setImages(kind string, meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) {
+func (c *Config) setImages(kind string, meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) error {
 	log.Printf("checking %s/%s/%s", meta.Namespace, kind, meta.Name)
-	c.setRegistryCredentials(meta.Namespace, template.Spec.ImagePullSecrets)
-	config := getConfigAnontation(meta, &template.Spec)
-	runningInitContainers, runningContainers := c.getRunningContainers(kind, meta, template)
+	err := c.setRegistryCredentials(meta.Namespace, template.Spec.ImagePullSecrets)
+	if err != nil {
+		return err
+	}
+	config, err := getConfigAnontation(meta, &template.Spec)
+	if err != nil {
+		return err
+	}
+	runningInitContainers, runningContainers, err := c.getRunningContainers(kind, meta, template)
+	if err != nil {
+		return err
+	}
 	updateInitContainers := c.getUpdates(config.InitContainers, template.Spec.InitContainers, runningInitContainers)
 	updateContainers := c.getUpdates(config.Containers, template.Spec.Containers, runningContainers)
 	if !c.update || (len(updateContainers) == 0 && len(updateInitContainers) == 0) {
-		return
+		return nil
 	}
 	log.Printf("update %s/%s/%s", meta.Namespace, kind, meta.Name)
 	jsonConfig, err := json.Marshal(config)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	jsonConfigString := string(jsonConfig)
 	var setAnnotation = func(meta *metav1.ObjectMeta) {
@@ -482,7 +517,7 @@ func (c *Config) setImages(kind string, meta *metav1.ObjectMeta, template *v1.Po
 			client := c.cluster.AppsV1().Deployments(meta.Namespace)
 			resource, err := client.Get(meta.Name, metav1.GetOptions{})
 			if err != nil {
-				log.Fatal(err)
+				return err
 			}
 			setAnnotation(&resource.ObjectMeta)
 			updateSpec(resource.Spec.Template.Spec.Containers, updateContainers)
@@ -495,7 +530,7 @@ func (c *Config) setImages(kind string, meta *metav1.ObjectMeta, template *v1.Po
 			client := c.cluster.AppsV1().DaemonSets(meta.Namespace)
 			resource, err := client.Get(meta.Name, metav1.GetOptions{})
 			if err != nil {
-				log.Fatal(err)
+				return err
 			}
 			setAnnotation(&resource.ObjectMeta)
 			updateSpec(resource.Spec.Template.Spec.Containers, updateContainers)
@@ -504,11 +539,12 @@ func (c *Config) setImages(kind string, meta *metav1.ObjectMeta, template *v1.Po
 			return err
 		}
 	default:
-		log.Fatalf("Unhandled kind %s", kind)
+		return fmt.Errorf("Unhandled kind %s", kind)
 	}
 	if err := retry.RetryOnConflict(retry.DefaultRetry, updateResource); err != nil {
-		log.Fatal(err)
+		return err
 	}
+	return nil
 }
 
 func inClusterClientPossible() bool {
@@ -561,6 +597,11 @@ func main() {
 	flag.BoolVar(&update, "update", false, "update deployments and daemonsets to use newer images (default false)")
 	flag.BoolVar(&checkpods, "check-pods", false, "check image digests of running pods (default false)")
 	flag.Parse()
-	c := NewConfig(kubeconfig, namespace, allnamespaces, update, checkpods)
-	c.Update(fieldSelector, labelSelector)
+	c, err := NewConfig(kubeconfig, namespace, allnamespaces, update, checkpods)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := c.Update(fieldSelector, labelSelector); err != nil {
+		log.Fatal(err)
+	}
 }

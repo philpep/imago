@@ -40,7 +40,9 @@ func TestGetDigestURL(t *testing.T) {
 		{"registry:5000/user/nginx:alpine", "https://registry:5000/v2/user/nginx/manifests/alpine"},
 	}
 	for _, test := range tests {
-		assert.Equal(t, getDigestURL(test.name), test.expected)
+		url, err := getDigestURL(test.name)
+		assert.Nil(t, err)
+		assert.Equal(t, url, test.expected)
 	}
 }
 
@@ -80,11 +82,10 @@ func TestGetDigest(t *testing.T) {
 	defer ts.Close()
 	reg := NewRegistryClient(ts.Client())
 	host, err := url.Parse(ts.URL)
-	if err != nil {
-		panic(err.Error())
-	}
+	assert.Nil(t, err)
 	assertDigest := func(name string) {
-		digest := reg.GetDigest(fmt.Sprintf("%s/%s", host.Host, name))
+		digest, err := reg.GetDigest(fmt.Sprintf("%s/%s", host.Host, name))
+		assert.Nil(t, err)
 		assert.Equal(t, digest, expected[name])
 	}
 	assertDigest("image")
