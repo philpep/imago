@@ -20,6 +20,5 @@ check:
 .PHONY: check
 
 docker:
-	for image in $$(grep 'FROM' Dockerfile | awk '{ print $$2 }'); do docker pull $$image; done
-	docker build -t philpep/imago .
+	docker build --pull -t philpep/imago .
 .PHONY: docker
