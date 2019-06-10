@@ -1,0 +1,6 @@
+language: go
+go: "1.12"
+env:
+  # actually required with go 1.12 because travis set default to "auto"
+  - GO111MODULE=on
+script: make test
