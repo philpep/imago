@@ -2,6 +2,9 @@
 Imago
 =====
 
+[![Build Status](https://travis-ci.org/philpep/imago.svg?branch=master)](https://travis-ci.org/philpep/imago)
+[![Go Report Card](https://goreportcard.com/badge/github.com/philpep/imago)](https://goreportcard.com/report/github.com/philpep/imago)
+
 This project aims to ease continuous delivery of docker images in a kubernetes
 cluster.
 
