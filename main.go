@@ -45,27 +45,36 @@ func closeResource(r io.Closer) {
 	}
 }
 
+// splitDockerDomain splits a repository name to domain and remotename string.
+// If no valid domain is found, the default domain is used. Repository name
+// needs to be already validated before.
+// From https://github.com/docker/distribution/blob/master/reference/normalize.go
+func splitDockerDomain(name string) (domain, remainder string) {
+	defaultDomain := "docker.io"
+	legacyDefaultDomain := "index.docker.io"
+	i := strings.IndexRune(name, '/')
+	if i == -1 || (!strings.ContainsAny(name[:i], ".:") && name[:i] != "localhost") {
+		domain, remainder = defaultDomain, name
+	} else {
+		domain, remainder = name[:i], name[i+1:]
+	}
+	if domain == legacyDefaultDomain {
+		domain = defaultDomain
+	}
+	if domain == defaultDomain && !strings.ContainsRune(remainder, '/') {
+		remainder = "library" + "/" + remainder
+	}
+	return
+}
+
 func getDigestURL(name string) (string, error) {
-	u, err := url.Parse(fmt.Sprintf("https://%s", name))
-	if err != nil {
-		return "", err
-	}
-	host := u.Host
-	path := u.Path
+	domain, image := splitDockerDomain(name)
 	tag := "latest"
-	if host == name || (!strings.Contains(host, ".") && !strings.Contains(host, ":")) {
-		host = "registry.hub.docker.com"
-		if !strings.Contains(path, "/") {
-			path = "/library/" + name
-		} else {
-			path = "/" + name
-		}
+	if strings.Contains(image, ":") {
+		s := strings.Split(image, ":")
+		image, tag = s[0], s[1]
 	}
-	if strings.Contains(path, ":") {
-		s := strings.Split(path, ":")
-		path, tag = s[0], s[1]
-	}
-	return fmt.Sprintf("%s://%s/v2%s/manifests/%s", u.Scheme, host, path, tag), nil
+	return fmt.Sprintf("https://%s/v2/%s/manifests/%s", domain, image, tag), nil
 }
 
 func getBearerToken(client *http.Client, authHeader string) (string, error) {
