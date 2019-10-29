@@ -267,6 +267,15 @@ func (c *Config) Update(fieldSelector, labelSelector string) error {
 			failed = append(failed, fmt.Sprintf("failed to check %s/DaemonSet/%s: %s", ds.ObjectMeta.Namespace, ds.Name, err))
 		}
 	}
+	statefulsets, err := client.StatefulSets(c.namespace).List(opts)
+	if err != nil {
+		return err
+	}
+	for _, sts := range statefulsets.Items {
+		if err := c.setImages("StatefulSet", &sts.ObjectMeta, &sts.Spec.Template); err != nil {
+			failed = append(failed, fmt.Sprintf("failed to check %s/StatefulSet/%s: %s", sts.ObjectMeta.Namespace, sts.Name, err))
+		}
+	}
 	batchClient := c.cluster.BatchV1beta1()
 	cronjobs, err := batchClient.CronJobs(c.namespace).List(opts)
 	if err != nil {
@@ -465,6 +474,10 @@ func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, temp
 				if owner.Kind == kind && owner.Name == meta.Name {
 					return true
 				}
+			case "StatefulSet":
+				if owner.Kind == kind && owner.Name == meta.Name {
+					return true
+				}
 			}
 		}
 		return false
@@ -562,6 +575,19 @@ func (c *Config) setImages(kind string, meta *metav1.ObjectMeta, template *v1.Po
 			_, err = client.Update(resource)
 			return err
 		}
+	case "StatefulSet":
+		updateResource = func() error {
+			client := c.cluster.AppsV1().StatefulSets(meta.Namespace)
+			resource, err := client.Get(meta.Name, metav1.GetOptions{})
+			if err != nil {
+				return err
+			}
+			setAnnotation(&resource.ObjectMeta)
+			updateSpec(resource.Spec.Template.Spec.Containers, updateContainers)
+			updateSpec(resource.Spec.Template.Spec.InitContainers, updateInitContainers)
+			_, err = client.Update(resource)
+			return err
+		}
 	case "CronJob":
 		updateResource = func() error {
 			client := c.cluster.BatchV1beta1().CronJobs(meta.Namespace)
@@ -628,7 +654,7 @@ func main() {
 	var checkpods bool
 	flag.StringVar(&kubeconfig, "kubeconfig", filepath.Join(homeDir(), ".kube", "config"), "kube config file")
 	flag.StringVar(&namespace, "n", "", "Check deployments and daemonsets in given namespace (default to current namespace)")
-	flag.StringVar(&labelSelector, "l", "", "Kubernetes labels selectors\nWarning: applies to Deployment, DaemonSet and CronJob, not pods !")
+	flag.StringVar(&labelSelector, "l", "", "Kubernetes labels selectors\nWarning: applies to Deployment, DaemonSet, StatefulSet and CronJob, not pods !")
 	flag.StringVar(&fieldSelector, "field-selector", "", "Kubernetes field-selector\nexample: metadata.name=myapp")
 	flag.BoolVar(&allnamespaces, "all-namespaces", false, "Check deployments and daemonsets on all namespaces (default false)")
 	flag.BoolVar(&update, "update", false, "update deployments and daemonsets to use newer images (default false)")

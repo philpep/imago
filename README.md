@@ -9,7 +9,7 @@ kubernetes cluster.
 [Imago](https://en.wikipedia.org/wiki/Imago) is the last stage of an
 insect, it also refer to `image` and `go` (golang).
 
-`imago` looks for kubernetes `Deployments`, `DaemonSets` and `CronJobs`
+`imago` looks for kubernetes `Deployments`, `DaemonSets`, `StatefulSet` and `CronJobs`
 configuration and update them to use the latest image sha256 digest from
 the docker repository.
 
@@ -23,7 +23,7 @@ This is useful to handle the following cases:
 
 ## How it works ?
 
-`imago` looks for `Deployments`, `DaemonSets` and `CronJob` configuration, get the
+`imago` looks for `Deployments`, `DaemonSets`, `StatefulSet` and `CronJob` configuration, get the
 latest sha256 digest from registry and update containers specifications
 to set image to the corresponding `registry/image@sha256:...` notation.
 It track the original image specification in the `imago-config-spec`
@@ -44,7 +44,7 @@ annotation.
             kube config file (default "~/.kube/config")
       -l string
             Kubernetes labels selectors
-            Warning: applies to Deployment, DaemonSet or CronJob, not pods !                                                                                                                  [15/832]
+            Warning: applies to Deployment, DaemonSet, StatefulSet or CronJob, not pods !                                                                                                                  [15/832]
       -n string
             Check deployments and daemonsets in given namespace (default to current namespace)
       -update
