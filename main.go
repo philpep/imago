@@ -50,7 +50,7 @@ func closeResource(r io.Closer) {
 // needs to be already validated before.
 // From https://github.com/docker/distribution/blob/master/reference/normalize.go
 func splitDockerDomain(name string) (domain, remainder string) {
-	defaultDomain := "docker.io"
+	defaultDomain := "registry.hub.docker.com"
 	legacyDefaultDomain := "index.docker.io"
 	i := strings.IndexRune(name, '/')
 	if i == -1 || (!strings.ContainsAny(name[:i], ".:") && name[:i] != "localhost") {
