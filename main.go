@@ -148,6 +148,8 @@ func (c *RegistryClient) GetDigest(name string) (string, error) {
 		return "", err
 	}
 	req.Header.Add("Accept", "application/vnd.docker.distribution.manifest.v2+json")
+	req.Header.Add("Accept", "application/vnd.docker.distribution.manifest.v1+json")
+	req.Header.Add("Accept", "application/vnd.docker.distribution.manifest.v1+prettyjws")
 	u, err := url.Parse(digestURL)
 	if err != nil {
 		return "", err
