@@ -46,7 +46,7 @@ annotation.
             Kubernetes labels selectors
             Warning: applies to Deployment, DaemonSet, StatefulSet or CronJob, not pods !                                                                                                                  [15/832]
       -n string
-            Check deployments and daemonsets in given namespace (default to current namespace)
+            Check deployments and daemonsets in given namespaces (default to current namespace)
       -update
             update deployments and daemonsets to use newer images (default false)
 

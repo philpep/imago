@@ -644,27 +644,46 @@ func homeDir() string {
 	return user.HomeDir
 }
 
+type arrayFlags []string
+
+func (i *arrayFlags) String() string {
+	return ""
+}
+
+func (i *arrayFlags) Set(value string) error {
+	*i = append(*i, value)
+	return nil
+}
+
 func main() {
 	var kubeconfig string
 	var labelSelector string
 	var fieldSelector string
 	var allnamespaces bool
-	var namespace string
+	var namespace arrayFlags
 	var update bool
 	var checkpods bool
 	flag.StringVar(&kubeconfig, "kubeconfig", filepath.Join(homeDir(), ".kube", "config"), "kube config file")
-	flag.StringVar(&namespace, "n", "", "Check deployments and daemonsets in given namespace (default to current namespace)")
+	flag.Var(&namespace, "n", "Check deployments and daemonsets in given namespaces (default to current namespace)")
 	flag.StringVar(&labelSelector, "l", "", "Kubernetes labels selectors\nWarning: applies to Deployment, DaemonSet, StatefulSet and CronJob, not pods !")
 	flag.StringVar(&fieldSelector, "field-selector", "", "Kubernetes field-selector\nexample: metadata.name=myapp")
 	flag.BoolVar(&allnamespaces, "all-namespaces", false, "Check deployments and daemonsets on all namespaces (default false)")
 	flag.BoolVar(&update, "update", false, "update deployments and daemonsets to use newer images (default false)")
 	flag.BoolVar(&checkpods, "check-pods", false, "check image digests of running pods (default false)")
 	flag.Parse()
-	c, err := NewConfig(kubeconfig, namespace, allnamespaces, update, checkpods)
-	if err != nil {
-		log.Fatal(err)
+	if allnamespaces && len(namespace) > 0 {
+		log.Fatal("You can't use -n with --all-namespaces")
 	}
-	if err := c.Update(fieldSelector, labelSelector); err != nil {
-		log.Fatal(err)
+	if len(namespace) == 0 {
+		namespace = append(namespace, "")
+	}
+	for _, ns := range namespace {
+		c, err := NewConfig(kubeconfig, ns, allnamespaces, update, checkpods)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := c.Update(fieldSelector, labelSelector); err != nil {
+			log.Fatal(err)
+		}
 	}
 }
