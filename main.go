@@ -80,7 +80,7 @@ func getDigestURL(name string) (string, error) {
 func getBearerToken(client *http.Client, authHeader string) (string, error) {
 	r := regexp.MustCompile("(.*)=\"(.*)\"")
 	authInfo := make(map[string]string)
-	for _, part := range strings.Split(strings.Split(authHeader, " ")[1], ",") {
+	for _, part := range strings.Split(strings.SplitN(authHeader, " ", 2)[1], ",") {
 		match := r.FindStringSubmatch(part)
 		authInfo[match[1]] = match[2]
 	}
