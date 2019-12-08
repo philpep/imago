@@ -1,4 +1,4 @@
-FROM golang:1.12-alpine as builder
+FROM golang:1.13-alpine as builder
 RUN apk add --no-cache git
 RUN adduser -D -u 1000 -h /home/user user
 USER user
@@ -6,7 +6,7 @@ WORKDIR /home/user
 COPY . .
 RUN CGO_ENABLED=0 go build
 
-FROM alpine:3.9
+FROM alpine:3.10
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /home/user/imago /usr/local/bin/
 RUN adduser -D -u 1000 user
