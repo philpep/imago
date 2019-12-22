@@ -6,7 +6,7 @@ WORKDIR /home/user
 COPY . .
 RUN CGO_ENABLED=0 go build
 
-FROM alpine:3.10
+FROM alpine:3.11
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /home/user/imago /usr/local/bin/
 RUN adduser -D -u 1000 user
