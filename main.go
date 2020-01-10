@@ -213,7 +213,7 @@ func NewConfig(kubeconfig string, namespace string, allnamespaces bool, update b
 				c.namespace = outClusterNamespace(kubeconfig)
 			}
 			if c.namespace == "" {
-				return fmt.Errorf("could not determine current namespace")
+				c.namespace = "default"
 			}
 		}
 		return nil
