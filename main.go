@@ -617,6 +617,14 @@ func inClusterClientPossible() bool {
 		err == nil && !fi.IsDir()
 }
 
+func defaultKubeConfig() string {
+	kubeconfig := os.Getenv("KUBECONFIG")
+	if kubeconfig == "" {
+		kubeconfig = filepath.Join(homeDir(), ".kube", "config")
+	}
+	return kubeconfig
+}
+
 func inClusterNamespace() string {
 	data, err := ioutil.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
 	if err != nil {
@@ -663,7 +671,7 @@ func main() {
 	var namespace arrayFlags
 	var update bool
 	var checkpods bool
-	flag.StringVar(&kubeconfig, "kubeconfig", filepath.Join(homeDir(), ".kube", "config"), "kube config file")
+	flag.StringVar(&kubeconfig, "kubeconfig", defaultKubeConfig(), "kube config file")
 	flag.Var(&namespace, "n", "Check deployments and daemonsets in given namespaces (default to current namespace)")
 	flag.StringVar(&labelSelector, "l", "", "Kubernetes labels selectors\nWarning: applies to Deployment, DaemonSet, StatefulSet and CronJob, not pods !")
 	flag.StringVar(&fieldSelector, "field-selector", "", "Kubernetes field-selector\nexample: metadata.name=myapp")
