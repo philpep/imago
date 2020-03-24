@@ -119,9 +119,17 @@ func getBearerToken(client *http.Client, authHeader string) (string, error) {
 
 // RegistryClient represent a docker client
 type RegistryClient struct {
-	client *http.Client
-	Auth   map[string]string
-	cache  map[string]string
+	client      *http.Client
+	Auth        map[string]string
+	DefaultAuth map[string]string
+	cache       map[string]string
+}
+
+// DockerRegistryCredentials represent content of docker config.json file
+type DockerRegistryCredentials struct {
+	Auths map[string]struct {
+		Auth string `json:"auth"`
+	} `json:"auths"`
 }
 
 // NewRegistryClient initialize a RegistryClient
@@ -196,7 +204,7 @@ type Config struct {
 }
 
 // NewConfig initialize a new imago config
-func NewConfig(kubeconfig string, namespace string, allnamespaces bool, update bool, checkpods bool) (*Config, error) {
+func NewConfig(kubeconfig string, namespace string, allnamespaces bool, update bool, checkpods bool, dockerconfig string) (*Config, error) {
 	c := &Config{reg: NewRegistryClient(nil), update: update, checkpods: checkpods}
 	var err error
 	var clusterConfig *rest.Config
@@ -239,6 +247,30 @@ func NewConfig(kubeconfig string, namespace string, allnamespaces bool, update b
 	c.cluster, err = kubernetes.NewForConfig(clusterConfig)
 	if err != nil {
 		return nil, err
+	}
+	var dockerconfigjson DockerRegistryCredentials
+	var data []byte
+	c.reg.DefaultAuth = make(map[string]string)
+	if dockerconfig == "" {
+		dockerconfig = filepath.Join(homeDir(), ".docker", "config.json")
+		data, err = ioutil.ReadFile(dockerconfig)
+		if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+	} else {
+		data, err = ioutil.ReadFile(dockerconfig)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(data) > 0 {
+		err = json.Unmarshal(data, &dockerconfigjson)
+		if err != nil {
+			return nil, err
+		}
+		for host, auth := range dockerconfigjson.Auths {
+			c.reg.DefaultAuth[host] = auth.Auth
+		}
 	}
 	return c, nil
 }
@@ -309,11 +341,10 @@ func (c *Config) getSecret(namespace string, name string) (*v1.Secret, error) {
 
 func (c *Config) setRegistryCredentials(namespace string, secrets []v1.LocalObjectReference) error {
 	c.reg.Auth = make(map[string]string)
-	var dockerconfig struct {
-		Auths map[string]struct {
-			Auth string `json:"auth"`
-		} `json:"auths"`
+	for k, v := range c.reg.DefaultAuth {
+		c.reg.Auth[k] = v
 	}
+	var dockerconfig DockerRegistryCredentials
 	for _, secret := range secrets {
 		secret, err := c.getSecret(namespace, secret.Name)
 		if err != nil {
@@ -671,6 +702,7 @@ func main() {
 	var namespace arrayFlags
 	var update bool
 	var checkpods bool
+	var dockerconfig string
 	flag.StringVar(&kubeconfig, "kubeconfig", defaultKubeConfig(), "kube config file")
 	flag.Var(&namespace, "n", "Check deployments and daemonsets in given namespaces (default to current namespace)")
 	flag.StringVar(&labelSelector, "l", "", "Kubernetes labels selectors\nWarning: applies to Deployment, DaemonSet, StatefulSet and CronJob, not pods !")
@@ -678,6 +710,7 @@ func main() {
 	flag.BoolVar(&allnamespaces, "all-namespaces", false, "Check deployments and daemonsets on all namespaces (default false)")
 	flag.BoolVar(&update, "update", false, "update deployments and daemonsets to use newer images (default false)")
 	flag.BoolVar(&checkpods, "check-pods", false, "check image digests of running pods (default false)")
+	flag.StringVar(&dockerconfig, "docker-config", "", "docker config file for pulling latest digests (default ~/.docker/config.json)")
 	flag.Parse()
 	if allnamespaces && len(namespace) > 0 {
 		log.Fatal("You can't use -n with --all-namespaces")
@@ -686,7 +719,7 @@ func main() {
 		namespace = append(namespace, "")
 	}
 	for _, ns := range namespace {
-		c, err := NewConfig(kubeconfig, ns, allnamespaces, update, checkpods)
+		c, err := NewConfig(kubeconfig, ns, allnamespaces, update, checkpods, dockerconfig)
 		if err != nil {
 			log.Fatal(err)
 		}
