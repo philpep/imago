@@ -86,7 +86,7 @@ build the code:
 Assuming you have a working `~/.kube/config` file:
 
     $ docker pull philpep/imago
-    $ docker run --rm -it -u $(id -u) -v ~/.kube/config:/config philpep/imago --help
+    $ docker run --rm -it -u $(id -u) -v ~/.kube/config:/var/lib/imago/.kube/config philpep/imago --help
 
 ### Inside the cluster
 
@@ -101,3 +101,11 @@ objects.
 
     $ kubectl apply -f deploy/serviceaccount.yaml
     $ kubectl apply -f deploy/cronjob.yaml
+
+
+## Docker credentials
+
+By default imago will looks for docker registry credentials in:
+
+* imagePullSecrets in the pod template specification
+* ~/.docker/config.json (e.g. /var/lib/imago/.docker/config.json in docker image)
