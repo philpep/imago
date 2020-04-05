@@ -31,24 +31,29 @@ annotation.
 
 ## Arguments
 
-    $ imago
-    Usage of imago:
-      -all-namespaces
-            Check deployments and daemonsets on all namespaces (default false)
-      -check-pods
-            check image digests of running pods (default false)
-      -field-selector string
-            Kubernetes field-selector
-            example: metadata.name=myapp
-      -kubeconfig string
-            kube config file (default "~/.kube/config")
-      -l string
-            Kubernetes labels selectors
-            Warning: applies to Deployment, DaemonSet, StatefulSet or CronJob, not pods !                                                                                                                  [15/832]
-      -n string
-            Check deployments and daemonsets in given namespaces (default to current namespace)
-      -update
-            update deployments and daemonsets to use newer images (default false)
+    $ imago --help
+	Usage of imago:
+	  -A	Check deployments and daemonsets on all namespaces (shorthand) (default false)
+	  -all-namespaces
+			Check deployments and daemonsets on all namespaces (default false)
+	  -check-pods
+			check image digests of running pods (default false)
+	  -docker-config string
+			docker config file for pulling latest digests (default ~/.docker/config.json)
+	  -field-selector string
+			Kubernetes field-selector
+			example: metadata.name=myapp
+	  -kubeconfig string
+			kube config file (default "~/.kube/config")
+	  -l string
+			Kubernetes labels selectors
+			Warning: applies to Deployment, DaemonSet, StatefulSet and CronJob, not pods !
+	  -n value
+			Check deployments and daemonsets in given namespaces (default to current namespace)
+	  -update
+			update deployments and daemonsets to use newer images (default false)
+	  -x value
+			Check deployments and daemonsets in all namespaces except given namespaces (implies --all-namespaces)
 
 By default, `imago` doesn't update your deployments, unless invoked with
 `--update`.

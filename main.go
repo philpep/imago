@@ -201,11 +201,12 @@ type Config struct {
 	namespace   string
 	update      bool
 	checkpods   bool
+	xnamespace  *arrayFlags
 }
 
 // NewConfig initialize a new imago config
-func NewConfig(kubeconfig string, namespace string, allnamespaces bool, update bool, checkpods bool, dockerconfig string) (*Config, error) {
-	c := &Config{reg: NewRegistryClient(nil), update: update, checkpods: checkpods}
+func NewConfig(kubeconfig string, namespace string, allnamespaces bool, xnamespace *arrayFlags, update bool, checkpods bool, dockerconfig string) (*Config, error) {
+	c := &Config{reg: NewRegistryClient(nil), update: update, checkpods: checkpods, xnamespace: xnamespace}
 	var err error
 	var clusterConfig *rest.Config
 
@@ -541,6 +542,10 @@ func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, temp
 }
 
 func (c *Config) setImages(kind string, meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) error {
+	if c.xnamespace.Contains(meta.Namespace) {
+		// namespace excluded from selection
+		return nil
+	}
 	log.Printf("checking %s/%s/%s", meta.Namespace, kind, meta.Name)
 	err := c.setRegistryCredentials(meta.Namespace, template.Spec.ImagePullSecrets)
 	if err != nil {
@@ -694,17 +699,28 @@ func (i *arrayFlags) Set(value string) error {
 	return nil
 }
 
+func (i *arrayFlags) Contains(value string) bool {
+	for _, x := range *i {
+		if x == value {
+			return true
+		}
+	}
+	return false
+}
+
 func main() {
 	var kubeconfig string
 	var labelSelector string
 	var fieldSelector string
 	var allnamespaces bool
 	var namespace arrayFlags
+	var xnamespace arrayFlags
 	var update bool
 	var checkpods bool
 	var dockerconfig string
 	flag.StringVar(&kubeconfig, "kubeconfig", defaultKubeConfig(), "kube config file")
 	flag.Var(&namespace, "n", "Check deployments and daemonsets in given namespaces (default to current namespace)")
+	flag.Var(&xnamespace, "x", "Check deployments and daemonsets in all namespaces except given namespaces (implies --all-namespaces)")
 	flag.StringVar(&labelSelector, "l", "", "Kubernetes labels selectors\nWarning: applies to Deployment, DaemonSet, StatefulSet and CronJob, not pods !")
 	flag.StringVar(&fieldSelector, "field-selector", "", "Kubernetes field-selector\nexample: metadata.name=myapp")
 	flag.BoolVar(&allnamespaces, "all-namespaces", false, "Check deployments and daemonsets on all namespaces (default false)")
@@ -719,8 +735,11 @@ func main() {
 	if len(namespace) == 0 {
 		namespace = append(namespace, "")
 	}
+	if len(xnamespace) > 0 {
+		allnamespaces = true
+	}
 	for _, ns := range namespace {
-		c, err := NewConfig(kubeconfig, ns, allnamespaces, update, checkpods, dockerconfig)
+		c, err := NewConfig(kubeconfig, ns, allnamespaces, &xnamespace, update, checkpods, dockerconfig)
 		if err != nil {
 			log.Fatal(err)
 		}
