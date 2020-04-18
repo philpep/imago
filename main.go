@@ -286,7 +286,7 @@ func (c *Config) Update(fieldSelector, labelSelector string) error {
 	}
 	failed := make([]string, 0)
 	for _, d := range deployments.Items {
-		if err = c.setImages("Deployment", &d.ObjectMeta, &d.Spec.Template); err != nil {
+		if err = c.process("Deployment", &d.ObjectMeta, &d.Spec.Template); err != nil {
 			log.Print(err)
 			failed = append(failed, fmt.Sprintf("failed to check %s/Deployment/%s: %s", d.ObjectMeta.Namespace, d.Name, err))
 		}
@@ -296,7 +296,7 @@ func (c *Config) Update(fieldSelector, labelSelector string) error {
 		return err
 	}
 	for _, ds := range daemonsets.Items {
-		if err := c.setImages("DaemonSet", &ds.ObjectMeta, &ds.Spec.Template); err != nil {
+		if err := c.process("DaemonSet", &ds.ObjectMeta, &ds.Spec.Template); err != nil {
 			failed = append(failed, fmt.Sprintf("failed to check %s/DaemonSet/%s: %s", ds.ObjectMeta.Namespace, ds.Name, err))
 		}
 	}
@@ -305,7 +305,7 @@ func (c *Config) Update(fieldSelector, labelSelector string) error {
 		return err
 	}
 	for _, sts := range statefulsets.Items {
-		if err := c.setImages("StatefulSet", &sts.ObjectMeta, &sts.Spec.Template); err != nil {
+		if err := c.process("StatefulSet", &sts.ObjectMeta, &sts.Spec.Template); err != nil {
 			failed = append(failed, fmt.Sprintf("failed to check %s/StatefulSet/%s: %s", sts.ObjectMeta.Namespace, sts.Name, err))
 		}
 	}
@@ -315,7 +315,7 @@ func (c *Config) Update(fieldSelector, labelSelector string) error {
 		return err
 	}
 	for _, cron := range cronjobs.Items {
-		if err := c.setImages("CronJob", &cron.ObjectMeta, &cron.Spec.JobTemplate.Spec.Template); err != nil {
+		if err := c.process("CronJob", &cron.ObjectMeta, &cron.Spec.JobTemplate.Spec.Template); err != nil {
 			failed = append(failed, fmt.Sprintf("failed to check %s/CronJob/%s: %s", cron.ObjectMeta.Namespace, cron.Name, err))
 		}
 	}
@@ -541,7 +541,7 @@ func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, temp
 	return runningInitContainers, runningContainers, nil
 }
 
-func (c *Config) setImages(kind string, meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) error {
+func (c *Config) process(kind string, meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) error {
 	if c.xnamespace.Contains(meta.Namespace) {
 		// namespace excluded from selection
 		return nil
