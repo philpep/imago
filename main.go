@@ -408,7 +408,7 @@ func mergeContainers(configContainers []configAnnotationImageSpec, containers []
 	return result
 }
 
-func getConfigAnontation(meta *metav1.ObjectMeta, spec *v1.PodSpec) (*configAnnotation, error) {
+func getConfigAnnotation(meta *metav1.ObjectMeta, spec *v1.PodSpec) (*configAnnotation, error) {
 	config := configAnnotation{}
 	rawConfig := meta.GetAnnotations()[imagoConfigAnnotation]
 	if len(rawConfig) > 0 {
@@ -551,7 +551,7 @@ func (c *Config) setImages(kind string, meta *metav1.ObjectMeta, template *v1.Po
 	if err != nil {
 		return err
 	}
-	config, err := getConfigAnontation(meta, &template.Spec)
+	config, err := getConfigAnnotation(meta, &template.Spec)
 	if err != nil {
 		return err
 	}
