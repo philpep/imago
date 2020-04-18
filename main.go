@@ -565,23 +565,26 @@ func (c *Config) process(kind string, meta *metav1.ObjectMeta, template *v1.PodT
 		return nil
 	}
 	log.Printf("update %s/%s/%s", meta.Namespace, kind, meta.Name)
-	jsonConfig, err := json.Marshal(config)
-	if err != nil {
-		return err
-	}
-	jsonConfigString := string(jsonConfig)
-	var setAnnotation = func(meta *metav1.ObjectMeta) {
+	var policyUpdateResource = func(meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) error {
+		jsonConfig, err := json.Marshal(config)
+		if err != nil {
+			return err
+		}
+		jsonConfigString := string(jsonConfig)
 		if meta.Annotations == nil {
 			meta.Annotations = make(map[string]string)
 		}
 		meta.Annotations[imagoConfigAnnotation] = jsonConfigString
-	}
-	var updateSpec = func(containers []v1.Container, update map[string]string) {
-		for i, container := range containers {
-			if newImage, ok := update[container.Name]; ok {
-				containers[i].Image = newImage
+		var updateSpec = func(containers []v1.Container, update map[string]string) {
+			for i, container := range containers {
+				if newImage, ok := update[container.Name]; ok {
+					containers[i].Image = newImage
+				}
 			}
 		}
+		updateSpec(template.Spec.Containers, updateContainers)
+		updateSpec(template.Spec.InitContainers, updateInitContainers)
+		return nil
 	}
 	var updateResource func() error
 	switch kind {
@@ -592,9 +595,9 @@ func (c *Config) process(kind string, meta *metav1.ObjectMeta, template *v1.PodT
 			if err != nil {
 				return err
 			}
-			setAnnotation(&resource.ObjectMeta)
-			updateSpec(resource.Spec.Template.Spec.Containers, updateContainers)
-			updateSpec(resource.Spec.Template.Spec.InitContainers, updateInitContainers)
+			if err = policyUpdateResource(&resource.ObjectMeta, &resource.Spec.Template); err != nil {
+				return err
+			}
 			_, err = client.Update(resource)
 			return err
 		}
@@ -605,9 +608,9 @@ func (c *Config) process(kind string, meta *metav1.ObjectMeta, template *v1.PodT
 			if err != nil {
 				return err
 			}
-			setAnnotation(&resource.ObjectMeta)
-			updateSpec(resource.Spec.Template.Spec.Containers, updateContainers)
-			updateSpec(resource.Spec.Template.Spec.InitContainers, updateInitContainers)
+			if err = policyUpdateResource(&resource.ObjectMeta, &resource.Spec.Template); err != nil {
+				return err
+			}
 			_, err = client.Update(resource)
 			return err
 		}
@@ -618,9 +621,9 @@ func (c *Config) process(kind string, meta *metav1.ObjectMeta, template *v1.PodT
 			if err != nil {
 				return err
 			}
-			setAnnotation(&resource.ObjectMeta)
-			updateSpec(resource.Spec.Template.Spec.Containers, updateContainers)
-			updateSpec(resource.Spec.Template.Spec.InitContainers, updateInitContainers)
+			if err = policyUpdateResource(&resource.ObjectMeta, &resource.Spec.Template); err != nil {
+				return err
+			}
 			_, err = client.Update(resource)
 			return err
 		}
@@ -631,9 +634,9 @@ func (c *Config) process(kind string, meta *metav1.ObjectMeta, template *v1.PodT
 			if err != nil {
 				return err
 			}
-			setAnnotation(&resource.ObjectMeta)
-			updateSpec(resource.Spec.JobTemplate.Spec.Template.Spec.Containers, updateContainers)
-			updateSpec(resource.Spec.JobTemplate.Spec.Template.Spec.InitContainers, updateInitContainers)
+			if err = policyUpdateResource(&resource.ObjectMeta, &resource.Spec.JobTemplate.Spec.Template); err != nil {
+				return err
+			}
 			_, err = client.Update(resource)
 			return err
 		}
