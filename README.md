@@ -29,6 +29,11 @@ to set image to the corresponding `registry/image@sha256:...` notation.
 It track the original image specification in the `imago-config-spec`
 annotation.
 
+Alternatively, with the `-restart` option, it check running pods sha256 and
+just restart resource that need to use newer images (assuming imagePullPolicy
+is Always). This method is slower than `-update` but it leave the container
+image in manifests untouched.
+
 ## Arguments
 
     $ imago --help
@@ -50,6 +55,8 @@ annotation.
 			Warning: applies to Deployment, DaemonSet, StatefulSet and CronJob, not pods !
 	  -n value
 			Check deployments and daemonsets in given namespaces (default to current namespace)
+	  -restart
+			rollout restart deployments and daemonsets to use newer images, implies -check-pods and assume imagePullPolicy is Always (default false)
 	  -update
 			update deployments and daemonsets to use newer images (default false)
 	  -x value

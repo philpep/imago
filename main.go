@@ -199,14 +199,14 @@ type Config struct {
 	reg         *RegistryClient
 	secretCache map[string]*v1.Secret
 	namespace   string
-	update      bool
+	policy      string
 	checkpods   bool
 	xnamespace  *arrayFlags
 }
 
 // NewConfig initialize a new imago config
-func NewConfig(kubeconfig string, namespace string, allnamespaces bool, xnamespace *arrayFlags, update bool, checkpods bool, dockerconfig string) (*Config, error) {
-	c := &Config{reg: NewRegistryClient(nil), update: update, checkpods: checkpods, xnamespace: xnamespace}
+func NewConfig(kubeconfig string, namespace string, allnamespaces bool, xnamespace *arrayFlags, policy string, checkpods bool, dockerconfig string) (*Config, error) {
+	c := &Config{reg: NewRegistryClient(nil), policy: policy, checkpods: checkpods, xnamespace: xnamespace}
 	var err error
 	var clusterConfig *rest.Config
 
@@ -373,6 +373,7 @@ type configAnnotation struct {
 }
 
 const imagoConfigAnnotation = "imago-config-spec"
+const imagoRestartedAtAnnotation = "imago/restartedAt"
 
 func mergeContainers(configContainers []configAnnotationImageSpec, containers []v1.Container) []configAnnotationImageSpec {
 	specImages := make(map[string]string)
@@ -561,30 +562,60 @@ func (c *Config) process(kind string, meta *metav1.ObjectMeta, template *v1.PodT
 	}
 	updateInitContainers := c.getUpdates(config.InitContainers, template.Spec.InitContainers, runningInitContainers)
 	updateContainers := c.getUpdates(config.Containers, template.Spec.Containers, runningContainers)
-	if !c.update || (len(updateContainers) == 0 && len(updateInitContainers) == 0) {
+	if c.policy == "" || (len(updateContainers) == 0 && len(updateInitContainers) == 0) {
 		return nil
 	}
-	log.Printf("update %s/%s/%s", meta.Namespace, kind, meta.Name)
-	var policyUpdateResource = func(meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) error {
-		jsonConfig, err := json.Marshal(config)
-		if err != nil {
-			return err
-		}
-		jsonConfigString := string(jsonConfig)
-		if meta.Annotations == nil {
-			meta.Annotations = make(map[string]string)
-		}
-		meta.Annotations[imagoConfigAnnotation] = jsonConfigString
-		var updateSpec = func(containers []v1.Container, update map[string]string) {
-			for i, container := range containers {
-				if newImage, ok := update[container.Name]; ok {
-					containers[i].Image = newImage
+	log.Printf("%s %s/%s/%s", c.policy, meta.Namespace, kind, meta.Name)
+	var policyUpdateResource func(*metav1.ObjectMeta, *v1.PodTemplateSpec) error
+	switch c.policy {
+	case "update":
+		policyUpdateResource = func(meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) error {
+			jsonConfig, err := json.Marshal(config)
+			if err != nil {
+				return err
+			}
+			jsonConfigString := string(jsonConfig)
+			if meta.Annotations == nil {
+				meta.Annotations = make(map[string]string)
+			}
+			meta.Annotations[imagoConfigAnnotation] = jsonConfigString
+			var updateSpec = func(containers []v1.Container, update map[string]string) {
+				for i, container := range containers {
+					if newImage, ok := update[container.Name]; ok {
+						containers[i].Image = newImage
+					}
 				}
 			}
+			updateSpec(template.Spec.Containers, updateContainers)
+			updateSpec(template.Spec.InitContainers, updateInitContainers)
+			return nil
 		}
-		updateSpec(template.Spec.Containers, updateContainers)
-		updateSpec(template.Spec.InitContainers, updateInitContainers)
-		return nil
+	case "restart":
+		policyUpdateResource = func(meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) error {
+			if meta.Annotations[imagoConfigAnnotation] != "" {
+				log.Printf("deleting %s annotation and reset images", imagoConfigAnnotation)
+				delete(meta.Annotations, imagoConfigAnnotation)
+				var updateSpec = func(containers []v1.Container, updates []configAnnotationImageSpec) {
+					for i, container := range containers {
+						for _, origContainer := range updates {
+							if origContainer.Name == container.Name {
+								containers[i].Image = origContainer.Image
+							}
+						}
+					}
+				}
+				updateSpec(template.Spec.Containers, config.Containers)
+				updateSpec(template.Spec.InitContainers, config.InitContainers)
+			}
+			if kind == "CronJob" {
+				return nil
+			}
+			if template.ObjectMeta.Annotations == nil {
+				template.ObjectMeta.Annotations = make(map[string]string)
+			}
+			template.ObjectMeta.Annotations[imagoRestartedAtAnnotation] = time.Now().Format(time.RFC3339)
+			return nil
+		}
 	}
 	var updateResource func() error
 	switch kind {
@@ -719,6 +750,7 @@ func main() {
 	var namespace arrayFlags
 	var xnamespace arrayFlags
 	var update bool
+	var restart bool
 	var checkpods bool
 	var dockerconfig string
 	flag.StringVar(&kubeconfig, "kubeconfig", defaultKubeConfig(), "kube config file")
@@ -729,6 +761,7 @@ func main() {
 	flag.BoolVar(&allnamespaces, "all-namespaces", false, "Check deployments and daemonsets on all namespaces (default false)")
 	flag.BoolVar(&allnamespaces, "A", false, "Check deployments and daemonsets on all namespaces (shorthand) (default false)")
 	flag.BoolVar(&update, "update", false, "update deployments and daemonsets to use newer images (default false)")
+	flag.BoolVar(&restart, "restart", false, "rollout restart deployments and daemonsets to use newer images, implies -check-pods and assume imagePullPolicy is Always (default false)")
 	flag.BoolVar(&checkpods, "check-pods", false, "check image digests of running pods (default false)")
 	flag.StringVar(&dockerconfig, "docker-config", "", "docker config file for pulling latest digests (default ~/.docker/config.json)")
 	flag.Parse()
@@ -741,8 +774,15 @@ func main() {
 	if len(xnamespace) > 0 {
 		allnamespaces = true
 	}
+	var policy string
+	if restart {
+		policy = "restart"
+		checkpods = true
+	} else if update {
+		policy = "update"
+	}
 	for _, ns := range namespace {
-		c, err := NewConfig(kubeconfig, ns, allnamespaces, &xnamespace, update, checkpods, dockerconfig)
+		c, err := NewConfig(kubeconfig, ns, allnamespaces, &xnamespace, policy, checkpods, dockerconfig)
 		if err != nil {
 			log.Fatal(err)
 		}
