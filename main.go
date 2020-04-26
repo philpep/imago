@@ -264,8 +264,8 @@ func getConfigAnnotation(meta *metav1.ObjectMeta, spec *v1.PodSpec) (*configAnno
 	return &config, nil
 }
 
-func needUpdate(name string, image string, specImage string, running map[string]string) bool {
-	if len(running) == 0 {
+func needUpdate(name string, image string, specImage string, running map[string]string, checkpods bool) bool {
+	if len(running) == 0 && !checkpods {
 		if image != specImage {
 			log.Printf("    %s need to be updated from %s to %s", name, specImage, image)
 			return true
@@ -304,7 +304,7 @@ func (c *Config) getUpdates(configContainers []configAnnotationImageSpec, contai
 			if specContainer.Name != container.Name {
 				continue
 			}
-			if needUpdate(container.Name, image, specContainer.Image, running[container.Name]) {
+			if needUpdate(container.Name, image, specContainer.Image, running[container.Name], c.checkpods) {
 				update[container.Name] = image
 			}
 		}
@@ -326,7 +326,7 @@ func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, temp
 		return runningInitContainers, runningContainers, nil
 	}
 	labelSelector := getSelector(template.ObjectMeta.Labels)
-	running, err := c.cluster.CoreV1().Pods(meta.Namespace).List(metav1.ListOptions{LabelSelector: labelSelector})
+	running, err := c.cluster.CoreV1().Pods(meta.Namespace).List(metav1.ListOptions{FieldSelector: "status.phase=Running", LabelSelector: labelSelector})
 	if err != nil {
 		return runningInitContainers, runningContainers, err
 	}
