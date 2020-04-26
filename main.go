@@ -15,14 +15,13 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
-	"net/http"
-	"net/url"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -36,6 +35,9 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/retry"
+
+	"github.com/containers/image/v5/docker"
+	"github.com/containers/image/v5/manifest"
 )
 
 func closeResource(r io.Closer) {
@@ -45,158 +47,43 @@ func closeResource(r io.Closer) {
 	}
 }
 
-// splitDockerDomain splits a repository name to domain and remotename string.
-// If no valid domain is found, the default domain is used. Repository name
-// needs to be already validated before.
-// From https://github.com/docker/distribution/blob/master/reference/normalize.go
-func splitDockerDomain(name string) (domain, remainder string) {
-	defaultDomain := "registry.hub.docker.com"
-	legacyDefaultDomain := "index.docker.io"
-	i := strings.IndexRune(name, '/')
-	if i == -1 || (!strings.ContainsAny(name[:i], ".:") && name[:i] != "localhost") {
-		domain, remainder = defaultDomain, name
-	} else {
-		domain, remainder = name[:i], name[i+1:]
-	}
-	if domain == legacyDefaultDomain {
-		domain = defaultDomain
-	}
-	if domain == defaultDomain && !strings.ContainsRune(remainder, '/') {
-		remainder = "library" + "/" + remainder
-	}
-	return
-}
-
-func getDigestURL(name string) (string, error) {
-	domain, image := splitDockerDomain(name)
-	tag := "latest"
-	if strings.Contains(image, ":") {
-		s := strings.Split(image, ":")
-		image, tag = s[0], s[1]
-	}
-	return fmt.Sprintf("https://%s/v2/%s/manifests/%s", domain, image, tag), nil
-}
-
-func getBearerToken(client *http.Client, authHeader string) (string, error) {
-	r := regexp.MustCompile("(.*)=\"(.*)\"")
-	authInfo := make(map[string]string)
-	for _, part := range strings.Split(strings.SplitN(authHeader, " ", 2)[1], ",") {
-		match := r.FindStringSubmatch(part)
-		authInfo[match[1]] = match[2]
-	}
-	if authInfo["realm"] == "" || authInfo["service"] == "" || authInfo["scope"] == "" {
-		return "", fmt.Errorf("unexpected or missing auth headers: %s", authInfo)
-	}
-	req, err := http.NewRequest("GET", authInfo["realm"], nil)
-	if err != nil {
-		return "", err
-	}
-	q := req.URL.Query()
-	q.Add("service", authInfo["service"])
-	q.Add("scope", authInfo["scope"])
-	req.URL.RawQuery = q.Encode()
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer closeResource(resp.Body)
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("error while requesting auth token on %s: %s", req.URL, resp.Status)
-	}
-	var result struct {
-		Token string `json:"token"`
-	}
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	err = json.Unmarshal(body, &result)
-	if err != nil {
-		return "", err
-	}
-	return result.Token, nil
-}
-
-// RegistryClient represent a docker client
-type RegistryClient struct {
-	client      *http.Client
-	Auth        map[string]string
-	DefaultAuth map[string]string
-	cache       map[string]string
-}
-
-// DockerRegistryCredentials represent content of docker config.json file
-type DockerRegistryCredentials struct {
-	Auths map[string]struct {
-		Auth string `json:"auth"`
-	} `json:"auths"`
-}
-
-// NewRegistryClient initialize a RegistryClient
-func NewRegistryClient(client *http.Client) *RegistryClient {
-	if client == nil {
-		client = &http.Client{
-			Timeout: time.Second * 10,
-		}
-	}
-	return &RegistryClient{
-		client: client,
-		Auth:   make(map[string]string),
-		cache:  make(map[string]string)}
-}
+var digestCache = map[string]string{}
 
 // GetDigest return the docker digest of given image name
-func (c *RegistryClient) GetDigest(name string) (string, error) {
-	digestURL, err := getDigestURL(name)
+func GetDigest(name string) (string, error) {
+	if digestCache[name] != "" {
+		return digestCache[name], nil
+	}
+	ref, err := docker.ParseReference("//" + name)
 	if err != nil {
 		return "", err
 	}
-	req, err := http.NewRequest("HEAD", digestURL, nil)
+	ctx := context.Background()
+	img, err := ref.NewImage(ctx, nil)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Add("Accept", "application/vnd.docker.distribution.manifest.v2+json")
-	req.Header.Add("Accept", "application/vnd.docker.distribution.manifest.v1+json")
-	req.Header.Add("Accept", "application/vnd.docker.distribution.manifest.v1+prettyjws")
-	u, err := url.Parse(digestURL)
-	if err != nil {
-		return "", err
-	}
-	if c.Auth[u.Host] != "" {
-		req.Header.Add("Authorization", fmt.Sprintf("Basic %s", c.Auth[u.Host]))
-	}
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer closeResource(resp.Body)
-	authenticate := resp.Header.Get("www-authenticate")
-	if resp.StatusCode == 401 && strings.HasPrefix(authenticate, "Bearer ") {
-		token, err := getBearerToken(c.client, authenticate)
-		if err != nil {
-			return "", err
+	defer func() {
+		if err := img.Close(); err != nil {
+			log.Print(err)
 		}
-		req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", token))
-		resp, err = c.client.Do(req)
-		if err != nil {
-			return "", err
-		}
-		defer closeResource(resp.Body)
+	}()
+	b, _, err := img.Manifest(ctx)
+	if err != nil {
+		return "", err
 	}
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("unexpected response while requesting %s: %s", digestURL, resp.Status)
+	digest, err := manifest.Digest(b)
+	if err != nil {
+		return "", err
 	}
-	digest := resp.Header.Get("Docker-Content-Digest")
-	if digest == "" {
-		return "", fmt.Errorf("no Docker-Content-Digest in response headers for %s", digestURL)
-	}
-	return digest, nil
+	digeststr := string(digest)
+	digestCache[name] = digeststr
+	return digeststr, nil
 }
 
 // Config represent a imago configuration
 type Config struct {
 	cluster     *kubernetes.Clientset
-	reg         *RegistryClient
 	secretCache map[string]*v1.Secret
 	namespace   string
 	policy      string
@@ -206,7 +93,7 @@ type Config struct {
 
 // NewConfig initialize a new imago config
 func NewConfig(kubeconfig string, namespace string, allnamespaces bool, xnamespace *arrayFlags, policy string, checkpods bool, dockerconfig string) (*Config, error) {
-	c := &Config{reg: NewRegistryClient(nil), policy: policy, checkpods: checkpods, xnamespace: xnamespace}
+	c := &Config{policy: policy, checkpods: checkpods, xnamespace: xnamespace}
 	var err error
 	var clusterConfig *rest.Config
 
@@ -248,30 +135,6 @@ func NewConfig(kubeconfig string, namespace string, allnamespaces bool, xnamespa
 	c.cluster, err = kubernetes.NewForConfig(clusterConfig)
 	if err != nil {
 		return nil, err
-	}
-	var dockerconfigjson DockerRegistryCredentials
-	var data []byte
-	c.reg.DefaultAuth = make(map[string]string)
-	if dockerconfig == "" {
-		dockerconfig = filepath.Join(homeDir(), ".docker", "config.json")
-		data, err = ioutil.ReadFile(dockerconfig)
-		if err != nil && !os.IsNotExist(err) {
-			return nil, err
-		}
-	} else {
-		data, err = ioutil.ReadFile(dockerconfig)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if len(data) > 0 {
-		err = json.Unmarshal(data, &dockerconfigjson)
-		if err != nil {
-			return nil, err
-		}
-		for host, auth := range dockerconfigjson.Auths {
-			c.reg.DefaultAuth[host] = auth.Auth
-		}
 	}
 	return c, nil
 }
@@ -338,28 +201,6 @@ func (c *Config) getSecret(namespace string, name string) (*v1.Secret, error) {
 		c.secretCache[key] = secret
 	}
 	return c.secretCache[key], nil
-}
-
-func (c *Config) setRegistryCredentials(namespace string, secrets []v1.LocalObjectReference) error {
-	c.reg.Auth = make(map[string]string)
-	for k, v := range c.reg.DefaultAuth {
-		c.reg.Auth[k] = v
-	}
-	var dockerconfig DockerRegistryCredentials
-	for _, secret := range secrets {
-		secret, err := c.getSecret(namespace, secret.Name)
-		if err != nil {
-			return err
-		}
-		err = json.Unmarshal(secret.Data[v1.DockerConfigJsonKey], &dockerconfig)
-		if err != nil {
-			return err
-		}
-		for host, auth := range dockerconfig.Auths {
-			c.reg.Auth[host] = auth.Auth
-		}
-	}
-	return nil
 }
 
 type configAnnotationImageSpec struct {
@@ -453,7 +294,7 @@ func (c *Config) getUpdates(configContainers []configAnnotationImageSpec, contai
 			log.Printf("    %s ok (fixed digest)", container.Name)
 			continue
 		}
-		digest, err := c.reg.GetDigest(container.Image)
+		digest, err := GetDigest(container.Image)
 		if err != nil {
 			log.Printf("    %s unable to get digest: %s", container.Name, err)
 			continue
@@ -548,10 +389,6 @@ func (c *Config) process(kind string, meta *metav1.ObjectMeta, template *v1.PodT
 		return nil
 	}
 	log.Printf("checking %s/%s/%s", meta.Namespace, kind, meta.Name)
-	err := c.setRegistryCredentials(meta.Namespace, template.Spec.ImagePullSecrets)
-	if err != nil {
-		return err
-	}
 	config, err := getConfigAnnotation(meta, &template.Spec)
 	if err != nil {
 		return err

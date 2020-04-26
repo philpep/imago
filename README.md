@@ -117,7 +117,6 @@ objects.
 
 ## Docker credentials
 
-By default imago will looks for docker registry credentials in:
-
-* imagePullSecrets in the pod template specification
-* ~/.docker/config.json (e.g. /var/lib/imago/.docker/config.json in docker image)
+Image will looks for docker registry credentials in ~/.docker/config.json (e.g.
+/var/lib/imago/.docker/config.json in docker image).
+So, in case you're using `imagePullSecrets`, you will have to mount the secret here.
