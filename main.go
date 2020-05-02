@@ -92,7 +92,7 @@ type Config struct {
 }
 
 // NewConfig initialize a new imago config
-func NewConfig(kubeconfig string, namespace string, allnamespaces bool, xnamespace *arrayFlags, policy string, checkpods bool, dockerconfig string) (*Config, error) {
+func NewConfig(kubeconfig string, namespace string, allnamespaces bool, xnamespace *arrayFlags, policy string, checkpods bool) (*Config, error) {
 	c := &Config{policy: policy, checkpods: checkpods, xnamespace: xnamespace}
 	var err error
 	var clusterConfig *rest.Config
@@ -589,7 +589,6 @@ func main() {
 	var update bool
 	var restart bool
 	var checkpods bool
-	var dockerconfig string
 	flag.StringVar(&kubeconfig, "kubeconfig", defaultKubeConfig(), "kube config file")
 	flag.Var(&namespace, "n", "Check deployments and daemonsets in given namespaces (default to current namespace)")
 	flag.Var(&xnamespace, "x", "Check deployments and daemonsets in all namespaces except given namespaces (implies --all-namespaces)")
@@ -600,7 +599,6 @@ func main() {
 	flag.BoolVar(&update, "update", false, "update deployments and daemonsets to use newer images (default false)")
 	flag.BoolVar(&restart, "restart", false, "rollout restart deployments and daemonsets to use newer images, implies -check-pods and assume imagePullPolicy is Always (default false)")
 	flag.BoolVar(&checkpods, "check-pods", false, "check image digests of running pods (default false)")
-	flag.StringVar(&dockerconfig, "docker-config", "", "docker config file for pulling latest digests (default ~/.docker/config.json)")
 	flag.Parse()
 	if allnamespaces && len(namespace) > 0 {
 		log.Fatal("You can't use -n with --all-namespaces")
@@ -619,7 +617,7 @@ func main() {
 		policy = "update"
 	}
 	for _, ns := range namespace {
-		c, err := NewConfig(kubeconfig, ns, allnamespaces, &xnamespace, policy, checkpods, dockerconfig)
+		c, err := NewConfig(kubeconfig, ns, allnamespaces, &xnamespace, policy, checkpods)
 		if err != nil {
 			log.Fatal(err)
 		}
