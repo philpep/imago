@@ -36,8 +36,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/retry"
 
-	"github.com/containers/image/docker"
-	"github.com/containers/image/manifest"
+	"github.com/containers/image/v5/docker"
+	"github.com/containers/image/v5/manifest"
 )
 
 func closeResource(r io.Closer) {
