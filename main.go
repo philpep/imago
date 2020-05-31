@@ -356,17 +356,17 @@ func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, temp
 		}
 		return false
 	}
-	re := regexp.MustCompile(".*://(.*@sha256:.*)")
+	re := regexp.MustCompile("(.*://)?(.*@sha256:.*)")
 	addImage := func(containers map[string]map[string]string, name string, podName string, image string) {
 		reMatch := re.FindStringSubmatch(image)
-		if len(reMatch) < 2 {
+		if len(reMatch) < 3 {
 			log.Printf("Unable to parse image digest %s", image)
 			return
 		}
 		if containers[name] == nil {
 			containers[name] = make(map[string]string)
 		}
-		containers[name][podName] = reMatch[1]
+		containers[name][podName] = reMatch[2]
 	}
 	for _, pod := range running.Items {
 		if match(&pod) {
