@@ -36,8 +36,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/retry"
 
-	"github.com/containers/image/v5/docker"
-	"github.com/containers/image/v5/manifest"
+	"github.com/containers/image/docker"
+	"github.com/containers/image/manifest"
 )
 
 func closeResource(r io.Closer) {
@@ -50,7 +50,7 @@ func closeResource(r io.Closer) {
 var digestCache = map[string]string{}
 
 // GetDigest return the docker digest of given image name
-func GetDigest(name string) (string, error) {
+func GetDigest(ctx context.Context, name string) (string, error) {
 	if digestCache[name] != "" {
 		return digestCache[name], nil
 	}
@@ -58,7 +58,6 @@ func GetDigest(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ctx := context.Background()
 	img, err := ref.NewImage(ctx, nil)
 	if err != nil {
 		return "", err
@@ -140,45 +139,45 @@ func NewConfig(kubeconfig string, namespace string, allnamespaces bool, xnamespa
 }
 
 // Update Deployment, DaemonSet and CronJob matching given selectors
-func (c *Config) Update(fieldSelector, labelSelector string) error {
+func (c *Config) Update(ctx context.Context, fieldSelector, labelSelector string) error {
 	client := c.cluster.AppsV1()
 	opts := metav1.ListOptions{FieldSelector: fieldSelector, LabelSelector: labelSelector}
-	deployments, err := client.Deployments(c.namespace).List(opts)
+	deployments, err := client.Deployments(c.namespace).List(ctx, opts)
 	if err != nil {
 		return err
 	}
 	failed := make([]string, 0)
 	for _, d := range deployments.Items {
-		if err = c.process("Deployment", &d.ObjectMeta, &d.Spec.Template); err != nil {
+		if err = c.process(ctx, "Deployment", &d.ObjectMeta, &d.Spec.Template); err != nil {
 			log.Print(err)
 			failed = append(failed, fmt.Sprintf("failed to check %s/Deployment/%s: %s", d.ObjectMeta.Namespace, d.Name, err))
 		}
 	}
-	daemonsets, err := client.DaemonSets(c.namespace).List(opts)
+	daemonsets, err := client.DaemonSets(c.namespace).List(ctx, opts)
 	if err != nil {
 		return err
 	}
 	for _, ds := range daemonsets.Items {
-		if err := c.process("DaemonSet", &ds.ObjectMeta, &ds.Spec.Template); err != nil {
+		if err := c.process(ctx, "DaemonSet", &ds.ObjectMeta, &ds.Spec.Template); err != nil {
 			failed = append(failed, fmt.Sprintf("failed to check %s/DaemonSet/%s: %s", ds.ObjectMeta.Namespace, ds.Name, err))
 		}
 	}
-	statefulsets, err := client.StatefulSets(c.namespace).List(opts)
+	statefulsets, err := client.StatefulSets(c.namespace).List(ctx, opts)
 	if err != nil {
 		return err
 	}
 	for _, sts := range statefulsets.Items {
-		if err := c.process("StatefulSet", &sts.ObjectMeta, &sts.Spec.Template); err != nil {
+		if err := c.process(ctx, "StatefulSet", &sts.ObjectMeta, &sts.Spec.Template); err != nil {
 			failed = append(failed, fmt.Sprintf("failed to check %s/StatefulSet/%s: %s", sts.ObjectMeta.Namespace, sts.Name, err))
 		}
 	}
 	batchClient := c.cluster.BatchV1beta1()
-	cronjobs, err := batchClient.CronJobs(c.namespace).List(opts)
+	cronjobs, err := batchClient.CronJobs(c.namespace).List(ctx, opts)
 	if err != nil {
 		return err
 	}
 	for _, cron := range cronjobs.Items {
-		if err := c.process("CronJob", &cron.ObjectMeta, &cron.Spec.JobTemplate.Spec.Template); err != nil {
+		if err := c.process(ctx, "CronJob", &cron.ObjectMeta, &cron.Spec.JobTemplate.Spec.Template); err != nil {
 			failed = append(failed, fmt.Sprintf("failed to check %s/CronJob/%s: %s", cron.ObjectMeta.Namespace, cron.Name, err))
 		}
 	}
@@ -188,13 +187,13 @@ func (c *Config) Update(fieldSelector, labelSelector string) error {
 	return nil
 }
 
-func (c *Config) getSecret(namespace string, name string) (*v1.Secret, error) {
+func (c *Config) getSecret(ctx context.Context, namespace string, name string) (*v1.Secret, error) {
 	key := fmt.Sprintf("%s/%s", namespace, name)
 	if c.secretCache == nil {
 		c.secretCache = make(map[string]*v1.Secret)
 	}
 	if c.secretCache[key] == nil {
-		secret, err := c.cluster.CoreV1().Secrets(namespace).Get(name, metav1.GetOptions{})
+		secret, err := c.cluster.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return nil, err
 		}
@@ -285,7 +284,7 @@ func needUpdate(name string, image string, specImage string, running map[string]
 	return result
 }
 
-func (c *Config) getUpdates(configContainers []configAnnotationImageSpec, containers []v1.Container, running map[string]map[string]string) map[string]string {
+func (c *Config) getUpdates(ctx context.Context, configContainers []configAnnotationImageSpec, containers []v1.Container, running map[string]map[string]string) map[string]string {
 	re := regexp.MustCompile(".*@(sha256:.*)")
 	update := make(map[string]string)
 	for _, container := range configContainers {
@@ -294,7 +293,7 @@ func (c *Config) getUpdates(configContainers []configAnnotationImageSpec, contai
 			log.Printf("    %s ok (fixed digest)", container.Name)
 			continue
 		}
-		digest, err := GetDigest(container.Image)
+		digest, err := GetDigest(ctx, container.Image)
 		if err != nil {
 			log.Printf("    %s unable to get digest: %s", container.Name, err)
 			continue
@@ -320,13 +319,13 @@ func getSelector(labels map[string]string) string {
 	return strings.Join(filters, ", ")
 }
 
-func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) (map[string]map[string]string, map[string]map[string]string, error) {
+func (c *Config) getRunningContainers(ctx context.Context, kind string, meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) (map[string]map[string]string, map[string]map[string]string, error) {
 	runningInitContainers, runningContainers := make(map[string]map[string]string), make(map[string]map[string]string)
 	if !c.checkpods {
 		return runningInitContainers, runningContainers, nil
 	}
 	labelSelector := getSelector(template.ObjectMeta.Labels)
-	running, err := c.cluster.CoreV1().Pods(meta.Namespace).List(metav1.ListOptions{FieldSelector: "status.phase=Running", LabelSelector: labelSelector})
+	running, err := c.cluster.CoreV1().Pods(meta.Namespace).List(ctx, metav1.ListOptions{FieldSelector: "status.phase=Running", LabelSelector: labelSelector})
 	if err != nil {
 		return runningInitContainers, runningContainers, err
 	}
@@ -334,7 +333,7 @@ func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, temp
 		for _, owner := range pod.OwnerReferences {
 			switch owner.Kind {
 			case "ReplicaSet":
-				rs, err := c.cluster.AppsV1().ReplicaSets(meta.Namespace).Get(owner.Name, metav1.GetOptions{})
+				rs, err := c.cluster.AppsV1().ReplicaSets(meta.Namespace).Get(ctx, owner.Name, metav1.GetOptions{})
 				if err != nil {
 					log.Print(err)
 					continue
@@ -383,7 +382,7 @@ func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, temp
 	return runningInitContainers, runningContainers, nil
 }
 
-func (c *Config) process(kind string, meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) error {
+func (c *Config) process(ctx context.Context, kind string, meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) error {
 	if c.xnamespace.Contains(meta.Namespace) {
 		// namespace excluded from selection
 		return nil
@@ -393,12 +392,12 @@ func (c *Config) process(kind string, meta *metav1.ObjectMeta, template *v1.PodT
 	if err != nil {
 		return err
 	}
-	runningInitContainers, runningContainers, err := c.getRunningContainers(kind, meta, template)
+	runningInitContainers, runningContainers, err := c.getRunningContainers(ctx, kind, meta, template)
 	if err != nil {
 		return err
 	}
-	updateInitContainers := c.getUpdates(config.InitContainers, template.Spec.InitContainers, runningInitContainers)
-	updateContainers := c.getUpdates(config.Containers, template.Spec.Containers, runningContainers)
+	updateInitContainers := c.getUpdates(ctx, config.InitContainers, template.Spec.InitContainers, runningInitContainers)
+	updateContainers := c.getUpdates(ctx, config.Containers, template.Spec.Containers, runningContainers)
 	if c.policy == "" || (len(updateContainers) == 0 && len(updateInitContainers) == 0) {
 		return nil
 	}
@@ -459,53 +458,53 @@ func (c *Config) process(kind string, meta *metav1.ObjectMeta, template *v1.PodT
 	case "Deployment":
 		updateResource = func() error {
 			client := c.cluster.AppsV1().Deployments(meta.Namespace)
-			resource, err := client.Get(meta.Name, metav1.GetOptions{})
+			resource, err := client.Get(ctx, meta.Name, metav1.GetOptions{})
 			if err != nil {
 				return err
 			}
 			if err = policyUpdateResource(&resource.ObjectMeta, &resource.Spec.Template); err != nil {
 				return err
 			}
-			_, err = client.Update(resource)
+			_, err = client.Update(ctx, resource, metav1.UpdateOptions{})
 			return err
 		}
 	case "DaemonSet":
 		updateResource = func() error {
 			client := c.cluster.AppsV1().DaemonSets(meta.Namespace)
-			resource, err := client.Get(meta.Name, metav1.GetOptions{})
+			resource, err := client.Get(ctx, meta.Name, metav1.GetOptions{})
 			if err != nil {
 				return err
 			}
 			if err = policyUpdateResource(&resource.ObjectMeta, &resource.Spec.Template); err != nil {
 				return err
 			}
-			_, err = client.Update(resource)
+			_, err = client.Update(ctx, resource, metav1.UpdateOptions{})
 			return err
 		}
 	case "StatefulSet":
 		updateResource = func() error {
 			client := c.cluster.AppsV1().StatefulSets(meta.Namespace)
-			resource, err := client.Get(meta.Name, metav1.GetOptions{})
+			resource, err := client.Get(ctx, meta.Name, metav1.GetOptions{})
 			if err != nil {
 				return err
 			}
 			if err = policyUpdateResource(&resource.ObjectMeta, &resource.Spec.Template); err != nil {
 				return err
 			}
-			_, err = client.Update(resource)
+			_, err = client.Update(ctx, resource, metav1.UpdateOptions{})
 			return err
 		}
 	case "CronJob":
 		updateResource = func() error {
 			client := c.cluster.BatchV1beta1().CronJobs(meta.Namespace)
-			resource, err := client.Get(meta.Name, metav1.GetOptions{})
+			resource, err := client.Get(ctx, meta.Name, metav1.GetOptions{})
 			if err != nil {
 				return err
 			}
 			if err = policyUpdateResource(&resource.ObjectMeta, &resource.Spec.JobTemplate.Spec.Template); err != nil {
 				return err
 			}
-			_, err = client.Update(resource)
+			_, err = client.Update(ctx, resource, metav1.UpdateOptions{})
 			return err
 		}
 	default:
@@ -621,7 +620,8 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		if err := c.Update(fieldSelector, labelSelector); err != nil {
+		ctx := context.Background()
+		if err := c.Update(ctx, fieldSelector, labelSelector); err != nil {
 			log.Fatal(err)
 		}
 	}
