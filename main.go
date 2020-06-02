@@ -88,11 +88,12 @@ type Config struct {
 	policy      string
 	checkpods   bool
 	xnamespace  *arrayFlags
+	context     context.Context
 }
 
 // NewConfig initialize a new imago config
-func NewConfig(kubeconfig string, namespace string, allnamespaces bool, xnamespace *arrayFlags, policy string, checkpods bool) (*Config, error) {
-	c := &Config{policy: policy, checkpods: checkpods, xnamespace: xnamespace}
+func NewConfig(kubeconfig string, namespace string, allnamespaces bool, xnamespace *arrayFlags, policy string, checkpods bool, ctx context.Context) (*Config, error) {
+	c := &Config{policy: policy, checkpods: checkpods, xnamespace: xnamespace, context: ctx}
 	var err error
 	var clusterConfig *rest.Config
 
@@ -139,7 +140,8 @@ func NewConfig(kubeconfig string, namespace string, allnamespaces bool, xnamespa
 }
 
 // Update Deployment, DaemonSet and CronJob matching given selectors
-func (c *Config) Update(ctx context.Context, fieldSelector, labelSelector string) error {
+func (c *Config) Update(fieldSelector, labelSelector string) error {
+	ctx := c.context
 	client := c.cluster.AppsV1()
 	opts := metav1.ListOptions{FieldSelector: fieldSelector, LabelSelector: labelSelector}
 	deployments, err := client.Deployments(c.namespace).List(ctx, opts)
@@ -148,7 +150,7 @@ func (c *Config) Update(ctx context.Context, fieldSelector, labelSelector string
 	}
 	failed := make([]string, 0)
 	for _, d := range deployments.Items {
-		if err = c.process(ctx, "Deployment", &d.ObjectMeta, &d.Spec.Template); err != nil {
+		if err = c.process("Deployment", &d.ObjectMeta, &d.Spec.Template); err != nil {
 			log.Print(err)
 			failed = append(failed, fmt.Sprintf("failed to check %s/Deployment/%s: %s", d.ObjectMeta.Namespace, d.Name, err))
 		}
@@ -158,7 +160,7 @@ func (c *Config) Update(ctx context.Context, fieldSelector, labelSelector string
 		return err
 	}
 	for _, ds := range daemonsets.Items {
-		if err := c.process(ctx, "DaemonSet", &ds.ObjectMeta, &ds.Spec.Template); err != nil {
+		if err := c.process("DaemonSet", &ds.ObjectMeta, &ds.Spec.Template); err != nil {
 			failed = append(failed, fmt.Sprintf("failed to check %s/DaemonSet/%s: %s", ds.ObjectMeta.Namespace, ds.Name, err))
 		}
 	}
@@ -167,7 +169,7 @@ func (c *Config) Update(ctx context.Context, fieldSelector, labelSelector string
 		return err
 	}
 	for _, sts := range statefulsets.Items {
-		if err := c.process(ctx, "StatefulSet", &sts.ObjectMeta, &sts.Spec.Template); err != nil {
+		if err := c.process("StatefulSet", &sts.ObjectMeta, &sts.Spec.Template); err != nil {
 			failed = append(failed, fmt.Sprintf("failed to check %s/StatefulSet/%s: %s", sts.ObjectMeta.Namespace, sts.Name, err))
 		}
 	}
@@ -177,7 +179,7 @@ func (c *Config) Update(ctx context.Context, fieldSelector, labelSelector string
 		return err
 	}
 	for _, cron := range cronjobs.Items {
-		if err := c.process(ctx, "CronJob", &cron.ObjectMeta, &cron.Spec.JobTemplate.Spec.Template); err != nil {
+		if err := c.process("CronJob", &cron.ObjectMeta, &cron.Spec.JobTemplate.Spec.Template); err != nil {
 			failed = append(failed, fmt.Sprintf("failed to check %s/CronJob/%s: %s", cron.ObjectMeta.Namespace, cron.Name, err))
 		}
 	}
@@ -187,7 +189,8 @@ func (c *Config) Update(ctx context.Context, fieldSelector, labelSelector string
 	return nil
 }
 
-func (c *Config) getSecret(ctx context.Context, namespace string, name string) (*v1.Secret, error) {
+func (c *Config) getSecret(namespace string, name string) (*v1.Secret, error) {
+	ctx := c.context
 	key := fmt.Sprintf("%s/%s", namespace, name)
 	if c.secretCache == nil {
 		c.secretCache = make(map[string]*v1.Secret)
@@ -284,7 +287,8 @@ func needUpdate(name string, image string, specImage string, running map[string]
 	return result
 }
 
-func (c *Config) getUpdates(ctx context.Context, configContainers []configAnnotationImageSpec, containers []v1.Container, running map[string]map[string]string) map[string]string {
+func (c *Config) getUpdates(configContainers []configAnnotationImageSpec, containers []v1.Container, running map[string]map[string]string) map[string]string {
+	ctx := c.context
 	re := regexp.MustCompile(".*@(sha256:.*)")
 	update := make(map[string]string)
 	for _, container := range configContainers {
@@ -319,7 +323,8 @@ func getSelector(labels map[string]string) string {
 	return strings.Join(filters, ", ")
 }
 
-func (c *Config) getRunningContainers(ctx context.Context, kind string, meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) (map[string]map[string]string, map[string]map[string]string, error) {
+func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) (map[string]map[string]string, map[string]map[string]string, error) {
+	ctx := c.context
 	runningInitContainers, runningContainers := make(map[string]map[string]string), make(map[string]map[string]string)
 	if !c.checkpods {
 		return runningInitContainers, runningContainers, nil
@@ -382,7 +387,8 @@ func (c *Config) getRunningContainers(ctx context.Context, kind string, meta *me
 	return runningInitContainers, runningContainers, nil
 }
 
-func (c *Config) process(ctx context.Context, kind string, meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) error {
+func (c *Config) process(kind string, meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) error {
+	ctx := c.context
 	if c.xnamespace.Contains(meta.Namespace) {
 		// namespace excluded from selection
 		return nil
@@ -392,12 +398,12 @@ func (c *Config) process(ctx context.Context, kind string, meta *metav1.ObjectMe
 	if err != nil {
 		return err
 	}
-	runningInitContainers, runningContainers, err := c.getRunningContainers(ctx, kind, meta, template)
+	runningInitContainers, runningContainers, err := c.getRunningContainers(kind, meta, template)
 	if err != nil {
 		return err
 	}
-	updateInitContainers := c.getUpdates(ctx, config.InitContainers, template.Spec.InitContainers, runningInitContainers)
-	updateContainers := c.getUpdates(ctx, config.Containers, template.Spec.Containers, runningContainers)
+	updateInitContainers := c.getUpdates(config.InitContainers, template.Spec.InitContainers, runningInitContainers)
+	updateContainers := c.getUpdates(config.Containers, template.Spec.Containers, runningContainers)
 	if c.policy == "" || (len(updateContainers) == 0 && len(updateInitContainers) == 0) {
 		return nil
 	}
@@ -616,12 +622,12 @@ func main() {
 		policy = "update"
 	}
 	for _, ns := range namespace {
-		c, err := NewConfig(kubeconfig, ns, allnamespaces, &xnamespace, policy, checkpods)
+		ctx := context.Background()
+		c, err := NewConfig(kubeconfig, ns, allnamespaces, &xnamespace, policy, checkpods, ctx)
 		if err != nil {
 			log.Fatal(err)
 		}
-		ctx := context.Background()
-		if err := c.Update(ctx, fieldSelector, labelSelector); err != nil {
+		if err := c.Update(fieldSelector, labelSelector); err != nil {
 			log.Fatal(err)
 		}
 	}
