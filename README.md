@@ -100,6 +100,10 @@ Assuming you have a working `~/.kube/config` file:
     $ docker pull philpep/imago
     $ docker run --rm -it -u $(id -u) -v ~/.kube/config:/var/lib/imago/.kube/config philpep/imago --help
 
+### From a pre-built binary
+
+Check [releases page](https://github.com/philpep/imago/releases).
+
 ### Inside the cluster
 
 You can run `imago` inside the cluster, for instance in a `CronJob`
