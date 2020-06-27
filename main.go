@@ -50,7 +50,7 @@ func closeResource(r io.Closer) {
 var digestCache = map[string]string{}
 
 // GetDigest return the docker digest of given image name
-func GetDigest(name string) (string, error) {
+func GetDigest(ctx context.Context, name string) (string, error) {
 	if digestCache[name] != "" {
 		return digestCache[name], nil
 	}
@@ -58,7 +58,6 @@ func GetDigest(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ctx := context.Background()
 	img, err := ref.NewImage(ctx, nil)
 	if err != nil {
 		return "", err
@@ -89,11 +88,12 @@ type Config struct {
 	policy      string
 	checkpods   bool
 	xnamespace  *arrayFlags
+	context     context.Context
 }
 
 // NewConfig initialize a new imago config
-func NewConfig(kubeconfig string, namespace string, allnamespaces bool, xnamespace *arrayFlags, policy string, checkpods bool) (*Config, error) {
-	c := &Config{policy: policy, checkpods: checkpods, xnamespace: xnamespace}
+func NewConfig(kubeconfig string, namespace string, allnamespaces bool, xnamespace *arrayFlags, policy string, checkpods bool, ctx context.Context) (*Config, error) {
+	c := &Config{policy: policy, checkpods: checkpods, xnamespace: xnamespace, context: ctx}
 	var err error
 	var clusterConfig *rest.Config
 
@@ -141,9 +141,10 @@ func NewConfig(kubeconfig string, namespace string, allnamespaces bool, xnamespa
 
 // Update Deployment, DaemonSet and CronJob matching given selectors
 func (c *Config) Update(fieldSelector, labelSelector string) error {
+	ctx := c.context
 	client := c.cluster.AppsV1()
 	opts := metav1.ListOptions{FieldSelector: fieldSelector, LabelSelector: labelSelector}
-	deployments, err := client.Deployments(c.namespace).List(opts)
+	deployments, err := client.Deployments(c.namespace).List(ctx, opts)
 	if err != nil {
 		return err
 	}
@@ -154,7 +155,7 @@ func (c *Config) Update(fieldSelector, labelSelector string) error {
 			failed = append(failed, fmt.Sprintf("failed to check %s/Deployment/%s: %s", d.ObjectMeta.Namespace, d.Name, err))
 		}
 	}
-	daemonsets, err := client.DaemonSets(c.namespace).List(opts)
+	daemonsets, err := client.DaemonSets(c.namespace).List(ctx, opts)
 	if err != nil {
 		return err
 	}
@@ -163,7 +164,7 @@ func (c *Config) Update(fieldSelector, labelSelector string) error {
 			failed = append(failed, fmt.Sprintf("failed to check %s/DaemonSet/%s: %s", ds.ObjectMeta.Namespace, ds.Name, err))
 		}
 	}
-	statefulsets, err := client.StatefulSets(c.namespace).List(opts)
+	statefulsets, err := client.StatefulSets(c.namespace).List(ctx, opts)
 	if err != nil {
 		return err
 	}
@@ -173,7 +174,7 @@ func (c *Config) Update(fieldSelector, labelSelector string) error {
 		}
 	}
 	batchClient := c.cluster.BatchV1beta1()
-	cronjobs, err := batchClient.CronJobs(c.namespace).List(opts)
+	cronjobs, err := batchClient.CronJobs(c.namespace).List(ctx, opts)
 	if err != nil {
 		return err
 	}
@@ -189,12 +190,13 @@ func (c *Config) Update(fieldSelector, labelSelector string) error {
 }
 
 func (c *Config) getSecret(namespace string, name string) (*v1.Secret, error) {
+	ctx := c.context
 	key := fmt.Sprintf("%s/%s", namespace, name)
 	if c.secretCache == nil {
 		c.secretCache = make(map[string]*v1.Secret)
 	}
 	if c.secretCache[key] == nil {
-		secret, err := c.cluster.CoreV1().Secrets(namespace).Get(name, metav1.GetOptions{})
+		secret, err := c.cluster.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return nil, err
 		}
@@ -286,6 +288,7 @@ func needUpdate(name string, image string, specImage string, running map[string]
 }
 
 func (c *Config) getUpdates(configContainers []configAnnotationImageSpec, containers []v1.Container, running map[string]map[string]string) map[string]string {
+	ctx := c.context
 	re := regexp.MustCompile(".*@(sha256:.*)")
 	update := make(map[string]string)
 	for _, container := range configContainers {
@@ -294,7 +297,7 @@ func (c *Config) getUpdates(configContainers []configAnnotationImageSpec, contai
 			log.Printf("    %s ok (fixed digest)", container.Name)
 			continue
 		}
-		digest, err := GetDigest(container.Image)
+		digest, err := GetDigest(ctx, container.Image)
 		if err != nil {
 			log.Printf("    %s unable to get digest: %s", container.Name, err)
 			continue
@@ -321,12 +324,13 @@ func getSelector(labels map[string]string) string {
 }
 
 func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) (map[string]map[string]string, map[string]map[string]string, error) {
+	ctx := c.context
 	runningInitContainers, runningContainers := make(map[string]map[string]string), make(map[string]map[string]string)
 	if !c.checkpods {
 		return runningInitContainers, runningContainers, nil
 	}
 	labelSelector := getSelector(template.ObjectMeta.Labels)
-	running, err := c.cluster.CoreV1().Pods(meta.Namespace).List(metav1.ListOptions{FieldSelector: "status.phase=Running", LabelSelector: labelSelector})
+	running, err := c.cluster.CoreV1().Pods(meta.Namespace).List(ctx, metav1.ListOptions{FieldSelector: "status.phase=Running", LabelSelector: labelSelector})
 	if err != nil {
 		return runningInitContainers, runningContainers, err
 	}
@@ -334,7 +338,7 @@ func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, temp
 		for _, owner := range pod.OwnerReferences {
 			switch owner.Kind {
 			case "ReplicaSet":
-				rs, err := c.cluster.AppsV1().ReplicaSets(meta.Namespace).Get(owner.Name, metav1.GetOptions{})
+				rs, err := c.cluster.AppsV1().ReplicaSets(meta.Namespace).Get(ctx, owner.Name, metav1.GetOptions{})
 				if err != nil {
 					log.Print(err)
 					continue
@@ -356,17 +360,17 @@ func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, temp
 		}
 		return false
 	}
-	re := regexp.MustCompile(".*://(.*@sha256:.*)")
+	re := regexp.MustCompile("(.*://)?(.*@sha256:.*)")
 	addImage := func(containers map[string]map[string]string, name string, podName string, image string) {
 		reMatch := re.FindStringSubmatch(image)
-		if len(reMatch) < 2 {
+		if len(reMatch) < 3 {
 			log.Printf("Unable to parse image digest %s", image)
 			return
 		}
 		if containers[name] == nil {
 			containers[name] = make(map[string]string)
 		}
-		containers[name][podName] = reMatch[1]
+		containers[name][podName] = reMatch[2]
 	}
 	for _, pod := range running.Items {
 		if match(&pod) {
@@ -384,6 +388,7 @@ func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, temp
 }
 
 func (c *Config) process(kind string, meta *metav1.ObjectMeta, template *v1.PodTemplateSpec) error {
+	ctx := c.context
 	if c.xnamespace.Contains(meta.Namespace) {
 		// namespace excluded from selection
 		return nil
@@ -459,53 +464,53 @@ func (c *Config) process(kind string, meta *metav1.ObjectMeta, template *v1.PodT
 	case "Deployment":
 		updateResource = func() error {
 			client := c.cluster.AppsV1().Deployments(meta.Namespace)
-			resource, err := client.Get(meta.Name, metav1.GetOptions{})
+			resource, err := client.Get(ctx, meta.Name, metav1.GetOptions{})
 			if err != nil {
 				return err
 			}
 			if err = policyUpdateResource(&resource.ObjectMeta, &resource.Spec.Template); err != nil {
 				return err
 			}
-			_, err = client.Update(resource)
+			_, err = client.Update(ctx, resource, metav1.UpdateOptions{})
 			return err
 		}
 	case "DaemonSet":
 		updateResource = func() error {
 			client := c.cluster.AppsV1().DaemonSets(meta.Namespace)
-			resource, err := client.Get(meta.Name, metav1.GetOptions{})
+			resource, err := client.Get(ctx, meta.Name, metav1.GetOptions{})
 			if err != nil {
 				return err
 			}
 			if err = policyUpdateResource(&resource.ObjectMeta, &resource.Spec.Template); err != nil {
 				return err
 			}
-			_, err = client.Update(resource)
+			_, err = client.Update(ctx, resource, metav1.UpdateOptions{})
 			return err
 		}
 	case "StatefulSet":
 		updateResource = func() error {
 			client := c.cluster.AppsV1().StatefulSets(meta.Namespace)
-			resource, err := client.Get(meta.Name, metav1.GetOptions{})
+			resource, err := client.Get(ctx, meta.Name, metav1.GetOptions{})
 			if err != nil {
 				return err
 			}
 			if err = policyUpdateResource(&resource.ObjectMeta, &resource.Spec.Template); err != nil {
 				return err
 			}
-			_, err = client.Update(resource)
+			_, err = client.Update(ctx, resource, metav1.UpdateOptions{})
 			return err
 		}
 	case "CronJob":
 		updateResource = func() error {
 			client := c.cluster.BatchV1beta1().CronJobs(meta.Namespace)
-			resource, err := client.Get(meta.Name, metav1.GetOptions{})
+			resource, err := client.Get(ctx, meta.Name, metav1.GetOptions{})
 			if err != nil {
 				return err
 			}
 			if err = policyUpdateResource(&resource.ObjectMeta, &resource.Spec.JobTemplate.Spec.Template); err != nil {
 				return err
 			}
-			_, err = client.Update(resource)
+			_, err = client.Update(ctx, resource, metav1.UpdateOptions{})
 			return err
 		}
 	default:
@@ -617,7 +622,8 @@ func main() {
 		policy = "update"
 	}
 	for _, ns := range namespace {
-		c, err := NewConfig(kubeconfig, ns, allnamespaces, &xnamespace, policy, checkpods)
+		ctx := context.Background()
+		c, err := NewConfig(kubeconfig, ns, allnamespaces, &xnamespace, policy, checkpods, ctx)
 		if err != nil {
 			log.Fatal(err)
 		}
