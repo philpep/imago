@@ -1,4 +1,4 @@
-FROM golang:1.13-alpine as builder
+FROM golang:1.14-alpine as builder
 RUN apk add --no-cache git
 RUN adduser -D -u 1000 -h /var/lib/imago imago
 USER imago
