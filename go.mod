@@ -1,6 +1,6 @@
 module github.com/philpep/imago
 
-go 1.16
+go 1.15
 
 require (
 	github.com/containers/image/v5 v5.4.4
