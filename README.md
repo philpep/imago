@@ -43,8 +43,6 @@ image in manifests untouched.
 			Check deployments and daemonsets on all namespaces (default false)
 	  -check-pods
 			check image digests of running pods (default false)
-	  -docker-config string
-			docker config file for pulling latest digests (default ~/.docker/config.json)
 	  -field-selector string
 			Kubernetes field-selector
 			example: metadata.name=myapp
