@@ -38,6 +38,7 @@ import (
 	"k8s.io/client-go/util/retry"
 
 	"github.com/containers/image/v5/docker"
+	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/image/v5/manifest"
 )
 
@@ -362,26 +363,38 @@ func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, temp
 		return false
 	}
 	re := regexp.MustCompile("(.*://)?(.*@sha256:.*)")
-	addImage := func(containers map[string]map[string]string, name string, podName string, image string) {
-		reMatch := re.FindStringSubmatch(image)
+	addImage := func(containers map[string]map[string]string, name string, podName string, image string, imageId string) {
+		reMatch := re.FindStringSubmatch(imageId)
+		newImageId := ""
 		if len(reMatch) < 3 {
-			log.Printf("Unable to parse image digest %s", image)
-			return
+			if regexp.MustCompile("[a-z0-9]+").MatchString(image) {
+				ref, err := docker.ParseReference("//" + image)
+				if err != nil {
+					log.Print(err)
+					return
+				}
+				newImageId = reference.TrimNamed(ref.DockerReference()).Name()
+			} else {
+				log.Printf("Unable to parse image digest (image %s, imageId %s)", image, imageId)
+				return
+			}
+		} else {
+			newImageId = reMatch[2]
 		}
 		if containers[name] == nil {
 			containers[name] = make(map[string]string)
 		}
-		containers[name][podName] = reMatch[2]
+		containers[name][podName] = newImageId
 	}
 	for _, pod := range running.Items {
 		if match(&pod) {
 			runningInitContainers[pod.Name] = make(map[string]string)
 			runningContainers[pod.Name] = make(map[string]string)
 			for _, container := range pod.Status.InitContainerStatuses {
-				addImage(runningInitContainers, container.Name, pod.Name, container.ImageID)
+				addImage(runningInitContainers, container.Name, pod.Name, container.Image, container.ImageID)
 			}
 			for _, container := range pod.Status.ContainerStatuses {
-				addImage(runningContainers, container.Name, pod.Name, container.ImageID)
+				addImage(runningContainers, container.Name, pod.Name, container.Image, container.ImageID)
 			}
 		}
 	}
