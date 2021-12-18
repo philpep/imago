@@ -1,0 +1,38 @@
+name: publish
+
+on:
+  release:
+    types:
+      - published
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: setup
+        uses: actions/setup-go@v2
+        with:
+          go-version: "1.15"
+      - name: build
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o imago-linux-amd64
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o imago-darwin-amd64
+      - uses: actions/upload-release-asset@v1
+        if: >-
+          github.event_name == 'release'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: imago-linux-amd64
+      - uses: actions/upload-release-asset@v1
+        if: >-
+          github.event_name == 'release'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: imago-darwin-amd64
+
