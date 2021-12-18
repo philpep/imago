@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -41,13 +40,6 @@ import (
 	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/image/v5/manifest"
 )
-
-func closeResource(r io.Closer) {
-	err := r.Close()
-	if err != nil {
-		log.Print(err)
-	}
-}
 
 var digestCache = map[string]string{}
 
@@ -84,13 +76,12 @@ func GetDigest(ctx context.Context, name string) (string, error) {
 
 // Config represent a imago configuration
 type Config struct {
-	cluster     *kubernetes.Clientset
-	secretCache map[string]*v1.Secret
-	namespace   string
-	policy      string
-	checkpods   bool
-	xnamespace  *arrayFlags
-	context     context.Context
+	cluster    *kubernetes.Clientset
+	namespace  string
+	policy     string
+	checkpods  bool
+	xnamespace *arrayFlags
+	context    context.Context
 }
 
 // NewConfig initialize a new imago config
@@ -189,22 +180,6 @@ func (c *Config) Update(fieldSelector, labelSelector string) error {
 		return fmt.Errorf(strings.Join(failed, "\n"))
 	}
 	return nil
-}
-
-func (c *Config) getSecret(namespace string, name string) (*v1.Secret, error) {
-	ctx := c.context
-	key := fmt.Sprintf("%s/%s", namespace, name)
-	if c.secretCache == nil {
-		c.secretCache = make(map[string]*v1.Secret)
-	}
-	if c.secretCache[key] == nil {
-		secret, err := c.cluster.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return nil, err
-		}
-		c.secretCache[key] = secret
-	}
-	return c.secretCache[key], nil
 }
 
 type configAnnotationImageSpec struct {
