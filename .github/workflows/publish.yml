@@ -21,6 +21,6 @@ jobs:
           CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o imago-darwin-amd64
       - uses: softprops/action-gh-release@v1
         with:
-          files:
-            - imago-linux-amd64
-            - imago-darwin-amd64
+          files: |
+            imago-linux-amd64
+            imago-darwin-amd64
