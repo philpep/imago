@@ -166,8 +166,7 @@ func (c *Config) Update(fieldSelector, labelSelector string) error {
 			failed = append(failed, fmt.Sprintf("failed to check %s/StatefulSet/%s: %s", sts.ObjectMeta.Namespace, sts.Name, err))
 		}
 	}
-	batchClient := c.cluster.BatchV1beta1()
-	cronjobs, err := batchClient.CronJobs(c.namespace).List(ctx, opts)
+	cronjobs, err := c.cluster.BatchV1().CronJobs(c.namespace).List(ctx, opts)
 	if err != nil {
 		return err
 	}
@@ -491,7 +490,7 @@ func (c *Config) process(kind string, meta *metav1.ObjectMeta, template *v1.PodT
 		}
 	case "CronJob":
 		updateResource = func() error {
-			client := c.cluster.BatchV1beta1().CronJobs(meta.Namespace)
+			client := c.cluster.BatchV1().CronJobs(meta.Namespace)
 			resource, err := client.Get(ctx, meta.Name, metav1.GetOptions{})
 			if err != nil {
 				return err
