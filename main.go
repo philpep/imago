@@ -242,33 +242,56 @@ func getConfigAnnotation(meta *metav1.ObjectMeta, spec *v1.PodSpec) (*configAnno
 	return &config, nil
 }
 
-func needUpdate(name string, image string, specImage string, running map[string]string, checkpods bool) bool {
-	if len(running) == 0 && !checkpods {
-		if image != specImage {
-			log.Printf("    %s need to be updated from %s to %s", name, specImage, image)
-			return true
-		}
-		log.Printf("    %s ok", name)
-		return false
+func needUpdate(name string, image string, specImage string) bool {
+	if image != specImage {
+		log.Printf("    %s need to be updated from %s to %s", name, specImage, image)
+		return true
 	}
+	log.Printf("    %s ok", name)
+	return false
+}
+
+func needRestart(name string, image string, running map[string]string) bool {
 	result := false
-	for pod, digest := range running {
-		if digest != image {
-			log.Printf("    %s on %s need to be updated from %s to %s", name, pod, digest, image)
-			result = true
-		} else {
+
+	// If `image` contains a SHA-256 digest, then it doesn't need to match exactly the name of the
+	// running image, as long as the digests match up. To check this, we first extract the digest
+	// from `image`.
+	digest := ""
+	re := regexp.MustCompile(".*@(sha256:.*)")
+	match := re.FindStringSubmatch(image)
+	if len(match) > 1 {
+		digest = match[1]
+	}
+
+	for pod, runningImage := range running {
+		if runningImage == image {
 			log.Printf("    %s on %s ok", name, pod)
+			continue
 		}
+		// The image names don't exactly match, but maybe they have matching SHA-256 digests:
+		if digest != "" {
+			match = re.FindStringSubmatch(runningImage)
+			if len(match) > 1 && match[1] == digest {
+				log.Printf("    %s on %s ok", name, pod)
+				continue
+			}
+		}
+		log.Printf("    %s on %s need to be updated from %s to %s", name, pod, runningImage, image)
+		result = true
 	}
 	return result
 }
 
 func (c *Config) getUpdates(configContainers []configAnnotationImageSpec, containers []v1.Container, running map[string]map[string]string) map[string]string {
 	ctx := c.context
-	re := regexp.MustCompile(".*@(sha256:.*)")
+	reDigest := regexp.MustCompile(".*@(sha256:.*)")
+	// We construct a regex to obtain the image name without tag by removing the tag if present.
+	// A tag can contain lower case letters, upper case letters, digits, underscore, dot, and dash.
+	reImageName := regexp.MustCompile("(.*)(:[a-zA-Z0-9_\\.-]*)?")
 	update := make(map[string]string)
 	for _, container := range configContainers {
-		match := re.FindStringSubmatch(container.Image)
+		match := reDigest.FindStringSubmatch(container.Image)
 		if len(match) > 1 {
 			log.Printf("    %s ok (fixed digest)", container.Name)
 			continue
@@ -278,14 +301,19 @@ func (c *Config) getUpdates(configContainers []configAnnotationImageSpec, contai
 			log.Printf("    %s unable to get digest: %s", container.Name, err)
 			continue
 		}
-		image := strings.Split(container.Image, ":")[0] + "@" + digest
-		for _, specContainer := range containers {
-			if specContainer.Name != container.Name {
-				continue
+		match = reImageName.FindStringSubmatch(container.Image)
+		image := match[1] + "@" + digest
+		if !c.checkpods {
+			for _, specContainer := range containers {
+				if specContainer.Name != container.Name {
+					continue
+				}
+				if needUpdate(container.Name, image, specContainer.Image) {
+					update[container.Name] = image
+				}
 			}
-			if needUpdate(container.Name, image, specContainer.Image, running[container.Name], c.checkpods) {
-				update[container.Name] = image
-			}
+		} else if needRestart(container.Name, image, running[container.Name]) {
+			update[container.Name] = image
 		}
 	}
 	return update
