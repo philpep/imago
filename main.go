@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/user"
@@ -288,7 +287,7 @@ func (c *Config) getUpdates(configContainers []configAnnotationImageSpec, contai
 	reDigest := regexp.MustCompile(".*@(sha256:.*)")
 	// We construct a regex to obtain the image name without tag by removing the tag if present.
 	// A tag can contain lower case letters, upper case letters, digits, underscore, dot, and dash.
-	reImageName := regexp.MustCompile("(.*)(:[a-zA-Z0-9_\\.-]*)?")
+	reImageName := regexp.MustCompile(`(.*)(:[a-zA-Z0-9_\.-]*)?`)
 	update := make(map[string]string)
 	for _, container := range configContainers {
 		match := reDigest.FindStringSubmatch(container.Image)
@@ -554,7 +553,7 @@ func defaultKubeConfig() string {
 }
 
 func inClusterNamespace() string {
-	data, err := ioutil.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+	data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
 	if err != nil {
 		log.Fatal(err)
 	}
