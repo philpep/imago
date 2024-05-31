@@ -3,7 +3,7 @@ module github.com/philpep/imago
 go 1.19
 
 require (
-	github.com/containers/image/v5 v5.29.2
+	github.com/containers/image/v5 v5.29.3
 	k8s.io/api v0.29.1
 	k8s.io/apimachinery v0.29.1
 	k8s.io/client-go v0.29.1
