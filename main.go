@@ -144,7 +144,7 @@ func (c *Config) Update(fieldSelector, labelSelector string) error {
 	for _, d := range deployments.Items {
 		if err = c.process("Deployment", &d.ObjectMeta, &d.Spec.Template); err != nil {
 			log.Print(err)
-			failed = append(failed, fmt.Sprintf("failed to check %s/Deployment/%s: %s", d.ObjectMeta.Namespace, d.Name, err))
+			failed = append(failed, fmt.Sprintf("failed to check %s/Deployment/%s: %s", d.Namespace, d.Name, err))
 		}
 	}
 	daemonsets, err := client.DaemonSets(c.namespace).List(ctx, opts)
@@ -153,7 +153,7 @@ func (c *Config) Update(fieldSelector, labelSelector string) error {
 	}
 	for _, ds := range daemonsets.Items {
 		if err := c.process("DaemonSet", &ds.ObjectMeta, &ds.Spec.Template); err != nil {
-			failed = append(failed, fmt.Sprintf("failed to check %s/DaemonSet/%s: %s", ds.ObjectMeta.Namespace, ds.Name, err))
+			failed = append(failed, fmt.Sprintf("failed to check %s/DaemonSet/%s: %s", ds.Namespace, ds.Name, err))
 		}
 	}
 	statefulsets, err := client.StatefulSets(c.namespace).List(ctx, opts)
@@ -162,7 +162,7 @@ func (c *Config) Update(fieldSelector, labelSelector string) error {
 	}
 	for _, sts := range statefulsets.Items {
 		if err := c.process("StatefulSet", &sts.ObjectMeta, &sts.Spec.Template); err != nil {
-			failed = append(failed, fmt.Sprintf("failed to check %s/StatefulSet/%s: %s", sts.ObjectMeta.Namespace, sts.Name, err))
+			failed = append(failed, fmt.Sprintf("failed to check %s/StatefulSet/%s: %s", sts.Namespace, sts.Name, err))
 		}
 	}
 	cronjobs, err := c.cluster.BatchV1().CronJobs(c.namespace).List(ctx, opts)
@@ -171,11 +171,11 @@ func (c *Config) Update(fieldSelector, labelSelector string) error {
 	}
 	for _, cron := range cronjobs.Items {
 		if err := c.process("CronJob", &cron.ObjectMeta, &cron.Spec.JobTemplate.Spec.Template); err != nil {
-			failed = append(failed, fmt.Sprintf("failed to check %s/CronJob/%s: %s", cron.ObjectMeta.Namespace, cron.Name, err))
+			failed = append(failed, fmt.Sprintf("failed to check %s/CronJob/%s: %s", cron.Namespace, cron.Name, err))
 		}
 	}
 	if len(failed) > 0 {
-		return fmt.Errorf(strings.Join(failed, "\n"))
+		return fmt.Errorf("%s", strings.Join(failed, "\n"))
 	}
 	return nil
 }
@@ -332,7 +332,7 @@ func (c *Config) getRunningContainers(kind string, meta *metav1.ObjectMeta, temp
 	if !c.checkpods {
 		return runningInitContainers, runningContainers, nil
 	}
-	labelSelector := getSelector(template.ObjectMeta.Labels)
+	labelSelector := getSelector(template.Labels)
 	running, err := c.cluster.CoreV1().Pods(meta.Namespace).List(ctx, metav1.ListOptions{FieldSelector: "status.phase=Running", LabelSelector: labelSelector})
 	if err != nil {
 		return runningInitContainers, runningContainers, err
@@ -467,10 +467,10 @@ func (c *Config) process(kind string, meta *metav1.ObjectMeta, template *v1.PodT
 			if kind == "CronJob" {
 				return nil
 			}
-			if template.ObjectMeta.Annotations == nil {
-				template.ObjectMeta.Annotations = make(map[string]string)
+			if template.Annotations == nil {
+				template.Annotations = make(map[string]string)
 			}
-			template.ObjectMeta.Annotations[imagoRestartedAtAnnotation] = time.Now().Format(time.RFC3339)
+			template.Annotations[imagoRestartedAtAnnotation] = time.Now().Format(time.RFC3339)
 			return nil
 		}
 	}
