@@ -3,24 +3,24 @@ name: publish
 on:
   release:
     types:
-      - published
+    - published
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - name: checkout
-        uses: actions/checkout@v4
-      - name: setup
-        uses: actions/setup-go@v4
-        with:
-          go-version: "1.19"
-      - name: build
-        run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o imago-linux-amd64
-          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o imago-darwin-amd64
-      - uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            imago-linux-amd64
-            imago-darwin-amd64
+    - name: checkout
+      uses: actions/checkout@v4
+    - name: setup
+      uses: actions/setup-go@v4
+      with:
+        go-version: "1.19"
+    - name: build
+      run: |
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o imago-linux-amd64
+        CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o imago-darwin-amd64
+    - uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          imago-linux-amd64
+          imago-darwin-amd64
